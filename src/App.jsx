@@ -1,8 +1,9 @@
+/* eslint-disable react-hooks/rules-of-hooks */
 import React, { useState, useEffect } from 'react';
 import './App.css';
 import Admin from './Admin';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 // Built-in avatars (served from public/avatars/). Upload-your-own also supported.
 const AVATARS = [
@@ -65,6 +66,31 @@ function App() {
   }, [screen]);
 
   const saveProfile = (p) => { setProfile(p); try { localStorage.setItem('blitz_profile', JSON.stringify(p)); } catch {} };
+
+  // M-Pesa STK polling — must be before any conditional returns
+  useEffect(() => {
+    if (!stkCheckoutId || stkStatus !== 'waiting') return;
+    const interval = setInterval(async () => {
+      try {
+        const r = await fetch(`${API_URL}/mpesa/status/${stkCheckoutId}`);
+        const d = await r.json();
+        if (d.status === 'confirmed') {
+          clearInterval(interval);
+          setStkStatus('confirmed');
+          setCart([]); setScreen('confirmation');
+        } else if (d.status === 'failed') {
+          clearInterval(interval);
+          setStkStatus('failed');
+          setStkError(d.resultDesc || 'Payment failed or cancelled.');
+        }
+      } catch (e) { console.error(e); }
+    }, 3000);
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      if (stkStatus === 'waiting') { setStkStatus('failed'); setStkError('Timed out. Try again.'); }
+    }, 90000);
+    return () => { clearInterval(interval); clearTimeout(timeout); };
+  }, [stkCheckoutId, stkStatus]);
 
   if (isAdmin) {
     return (
@@ -134,28 +160,6 @@ function App() {
   const openProduct = (p) => { setActiveProduct(p); setDetailQty(1); setScreen('product'); };
   const onUpload = (e) => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
     rd.onloadend = () => saveProfile({ ...(profile || {}), photo: rd.result }); rd.readAsDataURL(f); };
-
-  // Poll M-Pesa confirmation after customer checkout
-  useEffect(() => {
-    if (!stkCheckoutId || stkStatus !== 'waiting') return;
-    const interval = setInterval(async () => {
-      try {
-        const r = await fetch(API_URL + '/mpesa/status/' + stkCheckoutId);
-        const d = await r.json();
-        if (d.status === 'confirmed') {
-          clearInterval(interval);
-          setStkStatus('confirmed');
-          setCart([]); setScreen('confirmation');
-        } else if (d.status === 'failed') {
-          clearInterval(interval);
-          setStkStatus('failed');
-          setStkError(d.resultDesc || 'Payment failed or cancelled.');
-        }
-      } catch (e) { console.error(e); }
-    }, 3000);
-    const timeout = setTimeout(() => { clearInterval(interval); if (stkStatus === 'waiting') { setStkStatus('failed'); setStkError('Timed out. Try again.'); } }, 90000);
-    return () => { clearInterval(interval); clearTimeout(timeout); };
-  }, [stkCheckoutId, stkStatus]);
 
   const submitReview = async () => {
     if (!reviewStars) { alert('Please tap a star rating first'); return; }

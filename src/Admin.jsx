@@ -250,7 +250,7 @@ function Admin() {
 
   const productList = Array.isArray(products) ? products : [];
   const filtered = productList.filter(p => !search.trim() || p.name.toLowerCase().includes(search.toLowerCase()) || (p.barcode||'').includes(search) || (p.category||'').toLowerCase().includes(search.toLowerCase()));
-  const P = summary ? summary.summary[period] : null;
+  const P = summary?.summary?.[period] ?? { revenue:0, profit:0, expenses:0, net:0, cash:0, mpesa:0, count:0 };
   const periodLabel = { today: 'Today', week: 'This week', month: 'This month', year: 'This year', all: 'All time' };
   const totalAlerts = alerts.out.length + alerts.low.length + (alerts.expired||[]).length;
   const receiptWALink = receipt && receipt.phone ? waLink(receipt.phone, 'BLITZ MALL RECEIPT\n' + receipt.date.toLocaleString() + '\nCashier: ' + receipt.cashier + '\n' + receipt.items.map(i => i.name + ' x' + i.qty + ' = KES ' + (i.price*i.qty)).join('\n') + '\nTotal: KES ' + receipt.total + (receipt.change > 0 ? '\nChange: KES ' + receipt.change : '') + '\nPayment: ' + receipt.paymentMethod + '\nThank you for shopping at Brilliant!') : null;

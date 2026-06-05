@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './Admin.css';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = 'https://blitzmall-backend.onrender.com/api';
 const BLANK = { name: '', category: '', barcode: '', buyingPrice: '', price: '', stock: '', description: '', image: null, expiryDate: '' };
 const money = (n) => 'KES ' + (Math.round((n || 0) * 100) / 100).toLocaleString();
 const stars = (n) => '★'.repeat(Math.max(0,n)) + '☆'.repeat(Math.max(0,5-n));

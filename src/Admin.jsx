@@ -102,7 +102,7 @@ function Admin() {
   const loadProducts = async () => { try { const r = await fetch(API_URL + '/products'); setProducts(asArray(await r.json())); } catch (e) { console.error(e); setProducts([]); } };
   const loadOrders = async () => { try { const r = await fetch(API_URL + '/admin/orders'); setOrders(asArray(await r.json())); } catch (e) { console.error(e); setOrders([]); } };
   const loadSales = async () => { try { const r = await fetch(API_URL + '/admin/sales?limit=15'); setRecentSales(asArray(await r.json())); } catch (e) { console.error(e); setRecentSales([]); } };
-  const loadSummary = async () => { try { const r = await fetch(API_URL + '/admin/summary'); setSummary(await r.json()); } catch (e) { console.error(e); } };
+  const loadSummary = async () => { try { const r = await fetch(API_URL + '/admin/summary'); const d = await r.json(); if (d && d.summary) setSummary(d); } catch (e) { console.error(e); } };
   const loadExpenses = async () => { try { const r = await fetch(API_URL + '/admin/expenses'); setExpenses(asArray(await r.json())); } catch (e) { console.error(e); setExpenses([]); } };
   const loadCredit = async () => { try { const r = await fetch(API_URL + '/admin/credit'); setCredit(asArray(await r.json())); } catch (e) { console.error(e); setCredit([]); } };
   const loadReviews = async () => { try { const r = await fetch(API_URL + '/admin/reviews'); setReviews(asArray(await r.json())); } catch (e) { console.error(e); setReviews([]); } };

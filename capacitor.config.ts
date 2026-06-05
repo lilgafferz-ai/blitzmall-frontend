@@ -5,7 +5,8 @@ const config: CapacitorConfig = {
   webDir: 'build',
   server: {
     url: 'https://blitzmall-frontend.vercel.app',
-    cleartext: false
+    cleartext: false,
+    androidScheme: 'https'
   },
   android: {
     backgroundColor: '#0a0a0c'

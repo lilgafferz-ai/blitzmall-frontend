@@ -11,8 +11,7 @@ root.render(
   </React.StrictMode>
 );
 
-const isNativeApp = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
-if ('serviceWorker' in navigator && !isNativeApp) {
+if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
       .then(reg => console.log('SW registered'))

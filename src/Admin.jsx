@@ -1,15 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './Admin.css';
+import { cacheProducts, getCachedProducts, queueSale, syncQueuedSales, getPendingCount, onOnline, onOffline } from './offline';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 const API_URL = 'https://blitzmall-backend.onrender.com/api';
 const BLANK = { name: '', category: '', barcode: '', buyingPrice: '', price: '', stock: '', description: '', image: null, expiryDate: '' };
+
+// JWT auth helper — adds Bearer token to every admin fetch
+const authHeaders = () => {
+  const token = localStorage.getItem('bm_token');
+  return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+};
 const money = (n) => 'KES ' + (Math.round((n || 0) * 100) / 100).toLocaleString();
 const stars = (n) => '★'.repeat(Math.max(0,n)) + '☆'.repeat(Math.max(0,5-n));
 const fmt = (d) => d ? new Date(d).toLocaleDateString() : '';
 
 function Admin() {
   const [loggedIn, setLoggedIn] = useState(false);
-  const [pw, setPw] = useState('');
+  const [user, setUser] = useState(null); // { name, role, username }
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [setupUsername, setSetupUsername] = useState('');
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupName, setSetupName] = useState('');
   const [tab, setTab] = useState('sales');
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -30,7 +48,10 @@ function Admin() {
   const [stkCheckoutId, setStkCheckoutId] = useState(null);
   const [stkStatus, setStkStatus] = useState('idle'); // idle | waiting | confirmed | failed
   const [stkError, setStkError] = useState('');
+  const [cameraScan, setCameraScan] = useState(false);
   const scanRef = useRef(null);
+  const cameraRef = useRef(null);
+  const barcodeLoopRef = useRef(null);
   const [staffList, setStaffList] = useState([]);
   const [cashier, setCashier] = useState('Owner');
   const [newStaffName, setNewStaffName] = useState('');
@@ -49,11 +70,45 @@ function Admin() {
   const [alerts, setAlerts] = useState({ low: [], out: [], expiringSoon: [], expired: [] });
   const [muted, setMuted] = useState(false);
   const [showBanner, setShowBanner] = useState(true);
+  const [users, setUsers] = useState([]);
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserRole, setNewUserRole] = useState('cashier');
+  const [newUserBranch, setNewUserBranch] = useState('');
+  const [offline, setOffline] = useState(!navigator.onLine);
+  const [pendingSync, setPendingSync] = useState(getPendingCount());
+  const [loyaltyPhone, setLoyaltyPhone] = useState('');
+  const [loyaltyData, setLoyaltyData] = useState(null);
+  const [loyaltyMembers, setLoyaltyMembers] = useState([]);
+  const [coupons, setCoupons] = useState([]);
+  const [couponCode, setCouponCode] = useState('');
+  const [couponType, setCouponType] = useState('percent');
+  const [couponValue, setCouponValue] = useState('');
+  const [couponMin, setCouponMin] = useState('');
+  const [couponExpiry, setCouponExpiry] = useState('');
+  const [couponMaxUses, setCouponMaxUses] = useState('');
+  const [notifGranted, setNotifGranted] = useState(false);
+  const [branches, setBranches] = useState([]);
+  const [activeBranchId, setActiveBranchId] = useState(null);
+  const [predictions, setPredictions] = useState(null);
+  const [predLoading, setPredLoading] = useState(false);
+  const [branchForm, setBranchForm] = useState({ name:'', location:'', phone:'', email:'' });
   const prevOut = useRef(new Set());
+  const prevBranchId = useRef(null);
+  const notifSent = useRef(new Set());
+  const prevOrderCount = useRef(0);
   const audioCtx = useRef(null);
   const mutedRef = useRef(false);
 
   useEffect(() => { mutedRef.current = muted; }, [muted]);
+
+  // Online/offline listeners
+  useEffect(() => {
+    const unsubOnline = onOnline(() => { setOffline(false); syncQueuedSales(authHeaders).then(r => { if (r.synced > 0) setPendingSync(getPendingCount()); }); });
+    const unsubOffline = onOffline(() => setOffline(true));
+    return () => { unsubOnline(); unsubOffline(); };
+  }, []);
 
   // Inject theme vars on <html> so admin UI stays visible even if WebView strips CSS classes
   useEffect(() => {
@@ -86,9 +141,15 @@ function Admin() {
     } catch (e) { console.error('alarm', e); }
   };
 
+  const authGet = (url) => fetch(url, { headers: authHeaders() });
+  const authPost = (url, body) => fetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+  const authPut = (url, body) => fetch(url, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(body) });
+  const authDelete = (url) => fetch(url, { method: 'DELETE', headers: authHeaders() });
+
   const checkAlerts = async () => {
     try {
-      const r = await fetch(API_URL + '/admin/summary');
+      const r = await authGet(API_URL + '/admin/summary');
+      if (!r.ok) return;
       const d = await r.json();
       const out = d.out || [], low = d.low || [], expiringSoon = d.expiringSoon || [], expired = d.expired || [];
       setAlerts({ low, out, expiringSoon, expired });
@@ -98,31 +159,179 @@ function Admin() {
     } catch (e) { console.error(e); }
   };
 
+  const withBranch = (url) => activeBranchId ? url + (url.includes('?') ? '&' : '?') + 'branchId=' + activeBranchId : url;
   const asArray = (d) => (Array.isArray(d) ? d : []);
-  const loadProducts = async () => { try { const r = await fetch(API_URL + '/products'); setProducts(asArray(await r.json())); } catch (e) { console.error(e); setProducts([]); } };
-  const loadOrders = async () => { try { const r = await fetch(API_URL + '/admin/orders'); setOrders(asArray(await r.json())); } catch (e) { console.error(e); setOrders([]); } };
-  const loadSales = async () => { try { const r = await fetch(API_URL + '/admin/sales?limit=15'); setRecentSales(asArray(await r.json())); } catch (e) { console.error(e); setRecentSales([]); } };
-  const loadSummary = async () => { try { const r = await fetch(API_URL + '/admin/summary'); const d = await r.json(); if (d && d.summary) setSummary(d); } catch (e) { console.error(e); } };
-  const loadExpenses = async () => { try { const r = await fetch(API_URL + '/admin/expenses'); setExpenses(asArray(await r.json())); } catch (e) { console.error(e); setExpenses([]); } };
-  const loadCredit = async () => { try { const r = await fetch(API_URL + '/admin/credit'); setCredit(asArray(await r.json())); } catch (e) { console.error(e); setCredit([]); } };
-  const loadReviews = async () => { try { const r = await fetch(API_URL + '/admin/reviews'); setReviews(asArray(await r.json())); } catch (e) { console.error(e); setReviews([]); } };
-  const loadStaff = async () => { try { const r = await fetch(API_URL + '/admin/staff'); setStaffList(asArray(await r.json())); } catch (e) { console.error(e); setStaffList([]); } };
+  const loadProducts = async () => {
+    try {
+      // Use authenticated endpoint with branch filter when logged in, fall back to public
+      const url = user ? withBranch(API_URL + '/admin/products') : API_URL + '/products';
+      const r = user ? await authGet(url) : await fetch(url);
+      const data = asArray(await r.json());
+      setProducts(data);
+      cacheProducts(data); // cache for offline use
+    } catch (e) {
+      console.error(e);
+      const cached = getCachedProducts();
+      if (cached.length > 0) setProducts(cached);
+      else setProducts([]);
+    }
+  };
+  const loadOrders = async () => { try { const r = await authGet(withBranch(API_URL + '/admin/orders')); setOrders(asArray(await r.json())); } catch (e) { console.error(e); setOrders([]); } };
+  const loadSales = async () => { try { const r = await authGet(withBranch(API_URL + '/admin/sales?limit=15')); setRecentSales(asArray(await r.json())); } catch (e) { console.error(e); setRecentSales([]); } };
+  const loadSummary = async () => {
+    try {
+      const r = await authGet(withBranch(API_URL + '/admin/summary'));
+      if (!r.ok) throw new Error('Server returned ' + r.status);
+      const d = await r.json();
+      if (d && d.summary) setSummary(d);
+    } catch (e) { console.error(e); }
+  };
+  const loadExpenses = async () => { try { const r = await authGet(withBranch(API_URL + '/admin/expenses')); setExpenses(asArray(await r.json())); } catch (e) { console.error(e); setExpenses([]); } };
+  const loadCredit = async () => { try { const r = await authGet(withBranch(API_URL + '/admin/credit')); setCredit(asArray(await r.json())); } catch (e) { console.error(e); setCredit([]); } };
+  const loadReviews = async () => { try { const r = await authGet(API_URL + '/admin/reviews'); setReviews(asArray(await r.json())); } catch (e) { console.error(e); setReviews([]); } };
+  const loadStaff = async () => { try { const r = await authGet(API_URL + '/admin/staff'); setStaffList(asArray(await r.json())); } catch (e) { console.error(e); setStaffList([]); } };
+  const loadUsers = async () => { try { const r = await authGet(API_URL + '/admin/users'); setUsers(asArray(await r.json())); } catch (e) { console.error(e); setUsers([]); } };
+  const createUser = async (e) => {
+    e.preventDefault();
+    if (!newUsername || !newPassword) { alert('Username and password required'); return; }
+    try {
+      const r = await authPost(API_URL + '/admin/users', { username: newUsername, password: newPassword, name: newUserName || newUsername, role: newUserRole, branchId: newUserBranch || null });
+      const d = await r.json();
+      if (d.success) { setNewUsername(''); setNewPassword(''); setNewUserName(''); setNewUserRole('cashier'); setNewUserBranch(''); loadUsers(); alert(d.message); }
+      else alert(d.error || 'Failed to create user');
+    } catch (e) { console.error(e); alert('Network error'); }
+  };
+  const delUser = async (id) => { if (!window.confirm('Delete this user?')) return; try { await authDelete(API_URL + '/admin/users/' + id); loadUsers(); } catch (e) { console.error(e); } };
+  const loadBranches = async () => { try { const r = await authGet(API_URL + '/admin/branches'); setBranches(asArray(await r.json())); } catch (e) { console.error(e); } };
+  const loadPredictions = async () => {
+    setPredLoading(true);
+    try { const r = await authGet(API_URL + '/admin/predictions'); if (r.ok) setPredictions(await r.json()); }
+    catch (e) { console.error(e); } finally { setPredLoading(false); }
+  };
+  const loadLoyaltyMembers = async () => { try { const r = await authGet(API_URL + '/admin/loyalty'); setLoyaltyMembers(asArray(await r.json())); } catch (e) { console.error(e); } };
+  const loadCoupons = async () => { try { const r = await authGet(API_URL + '/admin/coupons'); setCoupons(asArray(await r.json())); } catch (e) { console.error(e); } };
+  const lookupLoyalty = async () => {
+    if (!loyaltyPhone.trim()) return;
+    try {
+      const r = await authGet(API_URL + '/admin/loyalty/' + loyaltyPhone.trim());
+      setLoyaltyData(await r.json());
+    } catch (e) { console.error(e); }
+  };
+  const redeemPoints = async () => {
+    if (!loyaltyData || !loyaltyData.exists || loyaltyData.points < 100) { alert('Customer needs at least 100 points to redeem'); return; }
+    const pts = parseInt(prompt('How many points to redeem? (100 pts = KES 500 cashback, available: ' + loyaltyData.points + ')', Math.min(loyaltyData.points, 100)), 10);
+    if (!pts || pts < 100) return;
+    try {
+      const r = await authPost(API_URL + '/admin/loyalty/redeem', { phone: loyaltyData.phone, points: pts });
+      const d = await r.json();
+      if (d.success) { alert(d.message); lookupLoyalty(); } else alert(d.error || 'Redeem failed');
+    } catch (e) { console.error(e); }
+  };
+  const createCoupon = async (e) => {
+    e.preventDefault();
+    if (!couponCode || !couponValue) { alert('Code and value required'); return; }
+    try {
+      const r = await authPost(API_URL + '/admin/coupons', { code: couponCode, type: couponType, value: couponValue, minPurchase: couponMin, expiresAt: couponExpiry, maxUses: couponMaxUses });
+      const d = await r.json();
+      if (d.success) { setCouponCode(''); setCouponValue(''); setCouponMin(''); setCouponExpiry(''); setCouponMaxUses(''); loadCoupons(); }
+      else alert(d.error || 'Failed');
+    } catch (e) { console.error(e); }
+  };
+  const toggleCoupon = async (id, active) => { try { await authPut(API_URL + '/admin/coupons/' + id, { active: !active }); loadCoupons(); } catch (e) { console.error(e); } };
+  const delCoupon = async (id) => { if (!window.confirm('Delete this coupon?')) return; try { await authDelete(API_URL + '/admin/coupons/' + id); loadCoupons(); } catch (e) { console.error(e); } };
+
+  // Keep-alive ping to prevent Render backend from sleeping
+  const keepAlive = async () => {
+    try {
+      const r = await fetch(API_URL + '/admin/summary');
+      if (!r.ok) throw new Error('Keep-alive ping returned ' + r.status);
+      await r.json();
+    } catch (e) { /* silently ignore, backend might be cold-starting */ }
+  };
+
+  // Request browser notification permission on login
+  useEffect(() => {
+    if (!loggedIn) return;
+    if ('Notification' in window && Notification.permission === 'default') { Notification.requestPermission().then(p => setNotifGranted(p === 'granted')); }
+    if ('Notification' in window) setNotifGranted(Notification.permission === 'granted');
+  }, [loggedIn]);
+
+  // Show browser notifications for critical alerts (deduplicated)
+  useEffect(() => {
+    if (!loggedIn || !notifGranted || !('Notification' in window)) return;
+    const now = Date.now();
+    // Out of stock
+    for (const p of (alerts.out||[])) {
+      const key = 'out_' + p.name;
+      if (!notifSent.current.has(key)) {
+        notifSent.current.add(key);
+        new Notification('🚨 Out of Stock!', { body: p.name + ' is out of stock!', icon: '/favicon.ico' });
+      }
+    }
+    // Low stock
+    for (const p of (alerts.low||[])) {
+      const key = 'low_' + p.name;
+      if (!notifSent.current.has(key)) {
+        notifSent.current.add(key);
+        new Notification('⚠️ Low Stock', { body: p.name + ' only has ' + p.stock + ' left!', icon: '/favicon.ico' });
+      }
+    }
+    // Expired
+    for (const p of (alerts.expired||[])) {
+      const key = 'exp_' + p.name;
+      if (!notifSent.current.has(key)) {
+        notifSent.current.add(key);
+        new Notification('❌ Expired Product', { body: p.name + ' has expired!', icon: '/favicon.ico' });
+      }
+    }
+      // Clear old entries after 10 minutes to allow re-notification
+    if (notifSent.current.size > 100) notifSent.current = new Set();
+  }, [alerts.out.length, alerts.low.length, alerts.expired?.length, loggedIn, notifGranted]);
+
+  // New order browser notifications
+  useEffect(() => {
+    if (!loggedIn || !notifGranted || !('Notification' in window)) return;
+    if (prevOrderCount.current === 0 && orders.length > 0) { prevOrderCount.current = orders.length; return; }
+    if (orders.length > prevOrderCount.current) {
+      const newCount = orders.length - prevOrderCount.current;
+      const key = 'newOrder_' + Date.now();
+      if (!notifSent.current.has(key)) {
+        notifSent.current.add(key);
+        new Notification('🛒 New Order!', { body: newCount + ' new order' + (newCount > 1 ? 's' : '') + ' received!', icon: '/favicon.ico' });
+      }
+      prevOrderCount.current = orders.length;
+    }
+    if (notifSent.current.size > 100) notifSent.current = new Set();
+  }, [orders.length, loggedIn, notifGranted]);
 
   useEffect(() => {
     if (!loggedIn) return;
     checkAlerts();
+    keepAlive();
     const id = setInterval(checkAlerts, 25000);
-    return () => clearInterval(id);
+    const kaId = setInterval(keepAlive, 240000); // ping every 4 min to keep Render awake
+    return () => { clearInterval(id); clearInterval(kaId); };
   }, [loggedIn]);
 
   useEffect(() => {
     if (!loggedIn) return;
-    if (tab === 'records') loadSummary();
-    if (tab === 'expenses') { loadExpenses(); loadSummary(); }
-    if (tab === 'credit') loadCredit();
-    if (tab === 'reviews') loadReviews();
-    if (tab === 'staff') loadStaff();
+    if (tab === 'records') { loadSummary(); loadPredictions(); }
+    else if (tab === 'expenses') { loadExpenses(); loadSummary(); }
+    else if (tab === 'credit') loadCredit();
+    else if (tab === 'reviews') loadReviews();
+    else if (tab === 'staff') { loadStaff(); if (user?.role === 'owner') { loadUsers(); loadBranches(); } }
+    else if (tab === 'loyalty') { loadLoyaltyMembers(); loadCoupons(); }
+    else if (tab === 'branches' && (!user || user.role === 'owner')) loadBranches();
   }, [tab, loggedIn]);
+
+  // Reload data when branch filter changes
+  useEffect(() => {
+    if (!loggedIn || !user) return;
+    if (prevBranchId.current !== null && prevBranchId.current !== activeBranchId) {
+      loadProducts(); loadOrders(); loadSales(); loadSummary(); loadExpenses(); loadCredit();
+    }
+    prevBranchId.current = activeBranchId;
+  }, [activeBranchId, loggedIn]);
 
   // Poll M-Pesa STK status after sending push
   useEffect(() => {
@@ -134,7 +343,6 @@ function Admin() {
         if (d.status === 'confirmed') {
           clearInterval(interval);
           setStkStatus('confirmed');
-          // Now record the completed sale
           completeSaleRecord();
         } else if (d.status === 'failed') {
           clearInterval(interval);
@@ -143,15 +351,14 @@ function Admin() {
         }
       } catch (e) { console.error(e); }
     }, 3000);
-    // Timeout after 90s
     const timeout = setTimeout(() => { clearInterval(interval); if (stkStatus === 'waiting') { setStkStatus('failed'); setStkError('Timed out waiting for PIN. Try again.'); } }, 90000);
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [stkCheckoutId, stkStatus]);
 
-  // The actual backend sale recording (called after M-Pesa confirmed OR for cash/split)
   const completeSaleRecord = async () => {
+    const saleData = { items: saleCart.length ? saleCart : window._pendingSaleCart, paymentMethod: payMethod, amountGiven, cashPart, mpesaPart, cashier, custPhone, branchId: activeBranchId || undefined };
     try {
-      const r = await fetch(API_URL + '/admin/sales', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: saleCart.length ? saleCart : window._pendingSaleCart, paymentMethod: payMethod, amountGiven, cashPart, mpesaPart, staff: cashier, customerPhone: custPhone }) });
+      const r = await authPost(API_URL + '/admin/sales', saleData);
       const d = await r.json();
       if (d.success) {
         setLastChange({ change: d.change, total: d.total });
@@ -159,17 +366,78 @@ function Admin() {
         setSaleCart([]); setAmountGiven(''); setCashPart(''); setMpesaPart(''); setCustPhone('');
         setStkCheckoutId(null); setStkStatus('idle'); window._pendingSaleCart = null;
         loadProducts(); loadSales(); checkAlerts();
+        return;
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { /* fall through to offline queue */ }
+    // Offline: queue the sale locally
+    if (queueSale(saleData)) {
+      setPendingSync(getPendingCount());
+      setLastChange({ change: 0, total: saleData.items.reduce((s, i) => s + i.price * i.qty, 0) });
+      setSaleCart([]); setAmountGiven(''); setCashPart(''); setMpesaPart(''); setCustPhone('');
+      window._pendingSaleCart = null;
+    }
   };
+
+  // On mount, check if we have a saved token
+  useEffect(() => {
+    const savedToken = localStorage.getItem('bm_token');
+    const savedUser = localStorage.getItem('bm_user');
+    if (savedToken && savedUser) {
+      // Verify token is still valid
+      fetch(API_URL + '/admin/me', { headers: { 'Authorization': 'Bearer ' + savedToken } })
+        .then(r => { if (r.ok) return r.json(); throw new Error('Token expired'); })
+        .then(d => {
+          if (d.success) {
+            setUser(d.user);
+            setLoggedIn(true);
+            loadProducts(); loadOrders(); loadSales(); loadStaff();
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem('bm_token');
+          localStorage.removeItem('bm_user');
+        });
+    }
+  }, []);
 
   const login = async (e) => {
     e.preventDefault();
+    setLoginError('');
     try {
-      const r = await fetch(API_URL + '/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) });
-      if ((await r.json()).success) { setLoggedIn(true); setPw(''); loadProducts(); loadOrders(); loadSales(); loadStaff(); }
-      else alert('Wrong password!');
-    } catch (e) { console.error(e); }
+      const r = await fetch(API_URL + '/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: loginUsername, password: loginPassword }) });
+      const d = await r.json();
+      if (d.success) {
+        localStorage.setItem('bm_token', d.token);
+        localStorage.setItem('bm_user', JSON.stringify(d.user));
+        setUser(d.user);
+        setLoggedIn(true);
+        setLoginUsername(''); setLoginPassword('');
+        loadProducts(); loadOrders(); loadSales(); loadStaff();
+      } else {
+        // If 401 and no owner exists, prompt setup
+        if (r.status === 401 && d.needsSetup) {
+          setNeedsSetup(true);
+        } else {
+          setLoginError(d.error || 'Invalid username or password');
+        }
+      }
+    } catch (e) { console.error(e); setLoginError('Network error. Check connection.'); }
+  };
+
+  const handleSetup = async (e) => {
+    e.preventDefault();
+    try {
+      const r = await fetch(API_URL + '/admin/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: setupUsername, password: setupPassword, name: setupName }) });
+      const d = await r.json();
+      if (d.success) {
+        setNeedsSetup(false);
+        setLoginUsername(setupUsername);
+        setLoginPassword(setupPassword);
+        alert('Owner account created! Login with your credentials.');
+      } else {
+        alert(d.error || 'Setup failed');
+      }
+    } catch (e) { alert('Network error'); }
   };
 
   const onImage = (e) => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onloadend = () => setForm(s => ({ ...s, image: rd.result })); rd.readAsDataURL(f); };
@@ -178,14 +446,66 @@ function Admin() {
     e.preventDefault();
     if (!form.name || form.price === '') { alert('Name and selling price required'); return; }
     try {
+      const payload = { ...form, branchId: activeBranchId || undefined };
       const url = editingId ? API_URL + '/admin/products/' + editingId : API_URL + '/admin/products';
-      const r = await fetch(url, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const opts = editingId ? authPut(url, payload) : authPost(url, payload);
+      const r = await opts;
       if ((await r.json()).success) { resetForm(); loadProducts(); }
     } catch (e) { console.error(e); }
   };
   const editProduct = (p) => { setForm({ name: p.name||'', category: p.category||'', barcode: p.barcode||'', buyingPrice: p.buyingPrice??'', price: p.price??'', stock: p.stock??'', description: p.description||'', image: p.image||null, expiryDate: p.expiryDate ? new Date(p.expiryDate).toISOString().slice(0,10) : '' }); setEditingId(p._id); setShowForm(true); window.scrollTo(0,0); };
-  const delProduct = async (id) => { if (!window.confirm('Delete this item?')) return; try { const r = await fetch(API_URL + '/admin/products/' + id, { method: 'DELETE' }); if ((await r.json()).success) loadProducts(); } catch (e) { console.error(e); } };
-  const setStatus = async (id, status) => { try { await fetch(API_URL + '/admin/orders/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }); loadOrders(); } catch (e) { console.error(e); } };
+  const delProduct = async (id) => { if (!window.confirm('Delete this item?')) return; try { const r = await authDelete(API_URL + '/admin/products/' + id); if ((await r.json()).success) loadProducts(); } catch (e) { console.error(e); } };
+  const setStatus = async (id, status) => { try { await authPut(API_URL + '/admin/orders/' + id, { status }); loadOrders(); } catch (e) { console.error(e); } };
+
+  // Camera barcode scanning
+  const startCamera = async () => {
+    try {
+      setCameraScan(true);
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 640, height: 480 } });
+      if (cameraRef.current) cameraRef.current.srcObject = stream;
+
+      // Wait for video to play, then start detection
+      const video = cameraRef.current;
+      if (!video) return;
+      video.onloadedmetadata = () => { video.play(); };
+
+      const detect = async () => {
+        if (!cameraScan || !document.body.contains(video)) return;
+        try {
+          if (window.BarcodeDetector) {
+            const detector = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_39', 'code_128', 'qr_code'] });
+            const barcodes = await detector.detect(video);
+            if (barcodes.length > 0) {
+              const code = barcodes[0].rawValue;
+              stopCamera();
+              setScan(code);
+              // Try to find and add the product immediately
+              const byCode = products.find(p => p.barcode && p.barcode === code);
+              if (byCode) addToSale(byCode);
+              else { scanRef.current?.focus(); }
+              return;
+            }
+          }
+        } catch (e) { /* detection error, keep trying */ }
+        barcodeLoopRef.current = requestAnimationFrame(detect);
+      };
+      barcodeLoopRef.current = requestAnimationFrame(detect);
+    } catch (e) {
+      console.error('Camera error:', e);
+      setCameraScan(false);
+      alert('Could not access camera. Check permissions.');
+    }
+  };
+
+  const stopCamera = () => {
+    setCameraScan(false);
+    if (barcodeLoopRef.current) { cancelAnimationFrame(barcodeLoopRef.current); barcodeLoopRef.current = null; }
+    if (cameraRef.current) {
+      const stream = cameraRef.current.srcObject;
+      if (stream) { stream.getTracks().forEach(t => t.stop()); }
+      cameraRef.current.srcObject = null;
+    }
+  };
 
   const stockTag = (s) => { if (s === undefined || s === null) return null; if (s <= 0) return React.createElement('span', {className:'tag out'}, 'Out'); if (s < 2) return React.createElement('span', {className:'tag low'}, 'Low: ' + s); return React.createElement('span', {className:'tag ok'}, s + ' left'); };
   const expiryTag = (d) => {
@@ -212,7 +532,6 @@ function Admin() {
     if (payMethod === 'cash' && parseFloat(amountGiven||0) < saleTotal) { if (!window.confirm('Amount given is less than total. Record anyway?')) return; }
     if (payMethod === 'split' && splitCovered < saleTotal) { if (!window.confirm('Split amounts less than total. Record anyway?')) return; }
 
-    // M-Pesa: send STK push first, then poll for confirmation before recording
     if (payMethod === 'mpesa') {
       if (!custPhone) { alert('Enter customer phone number to send M-Pesa prompt.'); return; }
       try {
@@ -223,47 +542,218 @@ function Admin() {
         if (d.success) { setStkCheckoutId(d.checkoutRequestId); }
         else { setStkStatus('failed'); setStkError(d.error || 'M-Pesa request failed'); }
       } catch (e) { setStkStatus('failed'); setStkError('Network error sending M-Pesa request'); }
-      return; // wait for polling to confirm
+      return;
     }
 
     // Cash / split: record immediately
     await completeSaleRecord();
   };
-  const voidSale = async (id) => { if (!window.confirm('Void this sale and restore stock?')) return; try { const r = await fetch(API_URL + '/admin/sales/' + id, { method: 'DELETE' }); if ((await r.json()).success) { loadProducts(); loadSales(); } } catch (e) { console.error(e); } };
-  const addExpense = async (e) => { e.preventDefault(); if (!expDesc || expAmount === '') return; try { const r = await fetch(API_URL + '/admin/expenses', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description: expDesc, amount: expAmount }) }); if ((await r.json()).success) { setExpDesc(''); setExpAmount(''); loadExpenses(); loadSummary(); } } catch (e) { console.error(e); } };
-  const delExpense = async (id) => { try { const r = await fetch(API_URL + '/admin/expenses/' + id, { method: 'DELETE' }); if ((await r.json()).success) { loadExpenses(); loadSummary(); } } catch (e) { console.error(e); } };
+  const voidSale = async (id) => { if (!window.confirm('Void this sale and restore stock?')) return; try { const r = await authDelete(API_URL + '/admin/sales/' + id); if ((await r.json()).success) { loadProducts(); loadSales(); } } catch (e) { console.error(e); } };
+  const addExpense = async (e) => { e.preventDefault(); if (!expDesc || expAmount === '') return; try { const r = await authPost(API_URL + '/admin/expenses', { description: expDesc, amount: expAmount, branchId: activeBranchId || undefined }); if ((await r.json()).success) { setExpDesc(''); setExpAmount(''); loadExpenses(); loadSummary(); } } catch (e) { console.error(e); } };
+  const delExpense = async (id) => { try { const r = await authDelete(API_URL + '/admin/expenses/' + id); if ((await r.json()).success) { loadExpenses(); loadSummary(); } } catch (e) { console.error(e); } };
   const waLink = (phone, msg) => { let p = (phone||'').replace(/[^0-9]/g,''); if (p.startsWith('0')) p = '254' + p.slice(1); return 'https://wa.me/' + p + '?text=' + encodeURIComponent(msg); };
-  const addCredit = async (e) => { e.preventDefault(); if (!crName || crAmount === '') return; try { const r = await fetch(API_URL + '/admin/credit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerName: crName, phone: crPhone, amount: crAmount, note: crNote }) }); if ((await r.json()).success) { setCrName(''); setCrPhone(''); setCrAmount(''); setCrNote(''); loadCredit(); } } catch (e) { console.error(e); } };
-  const payCredit = async (id) => { try { const r = await fetch(API_URL + '/admin/credit/' + id + '/pay', { method: 'PUT' }); if ((await r.json()).success) loadCredit(); } catch (e) { console.error(e); } };
-  const delCredit = async (id) => { if (!window.confirm('Delete this record?')) return; try { const r = await fetch(API_URL + '/admin/credit/' + id, { method: 'DELETE' }); if ((await r.json()).success) loadCredit(); } catch (e) { console.error(e); } };
-  const delReview = async (id) => { if (!window.confirm('Delete this review?')) return; try { const r = await fetch(API_URL + '/admin/reviews/' + id, { method: 'DELETE' }); if ((await r.json()).success) loadReviews(); } catch (e) { console.error(e); } };
-  const addStaff = async (e) => { e.preventDefault(); if (!newStaffName.trim()) return; try { const r = await fetch(API_URL + '/admin/staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newStaffName }) }); if ((await r.json()).success) { setNewStaffName(''); loadStaff(); } } catch (e) { console.error(e); } };
-  const delStaff = async (id) => { if (!window.confirm('Remove this cashier?')) return; try { const r = await fetch(API_URL + '/admin/staff/' + id, { method: 'DELETE' }); if ((await r.json()).success) loadStaff(); } catch (e) { console.error(e); } };
-  const exportBackup = async () => { try { const r = await fetch(API_URL + '/admin/export'); const data = await r.json(); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'blitz-admin-backup-' + new Date().toISOString().slice(0,10) + '.json'; a.click(); URL.revokeObjectURL(url); } catch (e) { alert('Export failed'); } };
+  const addCredit = async (e) => { e.preventDefault(); if (!crName || crAmount === '') return; try { const r = await authPost(API_URL + '/admin/credit', { customerName: crName, phone: crPhone, amount: crAmount, note: crNote }); if ((await r.json()).success) { setCrName(''); setCrPhone(''); setCrAmount(''); setCrNote(''); loadCredit(); } } catch (e) { console.error(e); } };
+  const payCredit = async (id) => { try { const r = await authPut(API_URL + '/admin/credit/' + id + '/pay', {}); if ((await r.json()).success) loadCredit(); } catch (e) { console.error(e); } };
+  const delCredit = async (id) => { if (!window.confirm('Delete this record?')) return; try { const r = await authDelete(API_URL + '/admin/credit/' + id); if ((await r.json()).success) loadCredit(); } catch (e) { console.error(e); } };
+  const delReview = async (id) => { if (!window.confirm('Delete this review?')) return; try { const r = await authDelete(API_URL + '/admin/reviews/' + id); if ((await r.json()).success) loadReviews(); } catch (e) { console.error(e); } };
+  const addStaff = async (e) => { e.preventDefault(); if (!newStaffName.trim()) return; try { const r = await authPost(API_URL + '/admin/staff', { name: newStaffName, branchId: activeBranchId || undefined }); if ((await r.json()).success) { setNewStaffName(''); loadStaff(); } } catch (e) { console.error(e); } };
+  const delStaff = async (id) => { if (!window.confirm('Remove this cashier?')) return; try { const r = await authDelete(API_URL + '/admin/staff/' + id); if ((await r.json()).success) loadStaff(); } catch (e) { console.error(e); } };
+  const exportBackup = async () => { try { const r = await authGet(API_URL + '/admin/export'); const data = await r.json(); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'blitz-admin-backup-' + new Date().toISOString().slice(0,10) + '.json'; a.click(); URL.revokeObjectURL(url); } catch (e) { alert('Export failed'); } };
 
-  if (!loggedIn) return (
-    <div className="blitz-admin-login"><div className="blitz-admin-login-card"><div className="blitz-admin-logo">⚡</div>
-      <h1>Blitz Mall <span>Owner</span></h1><p className="blitz-admin-muted">Manage your store</p>
-      <form onSubmit={login}><input className="owner-field" type="password" placeholder="Owner password" value={pw} onChange={e => setPw(e.target.value)} required /><button className="blitz-admin-btn" type="submit">Enter HQ</button></form>
-    </div></div>
-  );
+  // ===== PDF & Excel Export =====
+  const exportSalesPDF = () => {
+    try {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageW = doc.internal.pageSize.getWidth();
+      // Header
+      doc.setFillColor(10, 10, 12);
+      doc.rect(0, 0, pageW, 35, 'F');
+      doc.setTextColor(255, 210, 74);
+      doc.setFontSize(22);
+      doc.text('Blitz Mall', 14, 18);
+      doc.setTextColor(244, 244, 246);
+      doc.setFontSize(10);
+      doc.text('Sales Report - ' + periodLabel[period] + ' - ' + new Date().toLocaleDateString(), 14, 27);
+      // Summary cards
+      const yy = 42;
+      doc.setFillColor(22, 22, 27);
+      doc.roundedRect(14, yy, (pageW-28-8)/2, 28, 3, 3, 'F');
+      doc.roundedRect(14+(pageW-28-8)/2+8, yy, (pageW-28-8)/2, 28, 3, 3, 'F');
+      doc.setTextColor(255, 210, 74);
+      doc.setFontSize(11);
+      doc.text('Revenue', 22, yy+10);
+      doc.setTextColor(244, 244, 246);
+      doc.setFontSize(16);
+      doc.text('KES ' + (Math.round(P.revenue*100)/100).toLocaleString(), 22, yy+23);
+      doc.setTextColor(54, 211, 153);
+      doc.setFontSize(11);
+      doc.text('Profit', 22+(pageW-28-8)/2+8+8, yy+10);
+      doc.setTextColor(244, 244, 246);
+      doc.setFontSize(16);
+      doc.text('KES ' + (Math.round(P.profit*100)/100).toLocaleString(), 22+(pageW-28-8)/2+8+8, yy+23);
+      // Second row
+      const yy2 = yy + 34;
+      doc.setFillColor(22, 22, 27);
+      doc.roundedRect(14, yy2, (pageW-28-8)/2, 28, 3, 3, 'F');
+      doc.roundedRect(14+(pageW-28-8)/2+8, yy2, (pageW-28-8)/2, 28, 3, 3, 'F');
+      doc.setTextColor(255, 45, 45);
+      doc.setFontSize(11);
+      doc.text('Expenses', 22, yy2+10);
+      doc.setTextColor(244, 244, 246);
+      doc.setFontSize(16);
+      doc.text('KES ' + (Math.round(P.expenses*100)/100).toLocaleString(), 22, yy2+23);
+      const netColor = P.net >= 0 ? '#36d399' : '#ff2d2d';
+      doc.setTextColor(netColor === '#36d399' ? 54 : 255, netColor === '#36d399' ? 211 : 45, netColor === '#36d399' ? 153 : 45);
+      doc.setFontSize(11);
+      doc.text('Net Profit', 22+(pageW-28-8)/2+8+8, yy2+10);
+      doc.setTextColor(244, 244, 246);
+      doc.setFontSize(16);
+      doc.text('KES ' + (Math.round(P.net*100)/100).toLocaleString(), 22+(pageW-28-8)/2+8+8, yy2+23);
+      // Best sellers table
+      const bestTable = (summary.best||[]).slice(0, 10).map(b => [b.name, b.qty || 0, 'KES ' + Math.round((b.revenue||0)*100)/100]);
+      autoTable(doc, {
+        head: [['Product', 'Sold', 'Revenue']],
+        body: bestTable,
+        startY: yy2 + 38,
+        theme: 'grid',
+        headStyles: { fillColor: [255, 122, 26], fontSize: 9 },
+        bodyStyles: { fillColor: [22, 22, 27], textColor: [244, 244, 246], fontSize: 9 },
+        alternateRowStyles: { fillColor: [16, 16, 20] },
+        tableLineColor: [38, 38, 46],
+        tableLineWidth: 0.1,
+      });
+      // Payment split summary
+      const finalY = doc.lastAutoTable.finalY + 10;
+      doc.setFillColor(22, 22, 27);
+      doc.roundedRect(14, finalY, pageW-28, 20, 3, 3, 'F');
+      doc.setTextColor(244, 244, 246);
+      doc.setFontSize(10);
+      doc.text('Cash: KES ' + (Math.round(P.cash*100)/100).toLocaleString() + '    M-Pesa: KES ' + (Math.round(P.mpesa*100)/100).toLocaleString(), 22, finalY+13);
+      // Footer
+      doc.setFillColor(10, 10, 12);
+      doc.rect(0, doc.internal.pageSize.getHeight()-15, pageW, 15, 'F');
+      doc.setTextColor(138, 138, 150);
+      doc.setFontSize(8);
+      doc.text('Generated by Blitz Mall HQ on ' + new Date().toLocaleString(), pageW/2, doc.internal.pageSize.getHeight()-6, { align: 'center' });
+      // Save
+      doc.save('blitz-sales-report-' + new Date().toISOString().slice(0,10) + '.pdf');
+    } catch (e) { console.error('PDF export error:', e); alert('Failed to generate PDF'); }
+  };
+
+  const exportInventoryExcel = () => {
+    try {
+      const rows = (products||[]).map(p => ({
+        Name: p.name,
+        Category: p.category || '',
+        Barcode: p.barcode || '',
+        'Buying Price': p.buyingPrice || 0,
+        'Selling Price': p.price || 0,
+        Stock: p.stock ?? 0,
+        'Expiry Date': p.expiryDate ? new Date(p.expiryDate).toLocaleDateString() : '',
+        'Margin KES': Math.round(((p.price||0)-(p.buyingPrice||0))*100)/100,
+      }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const colWidths = [{ wch: 30 }, { wch: 15 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 8 }, { wch: 15 }, { wch: 12 }];
+      ws['!cols'] = colWidths;
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
+      XLSX.writeFile(wb, 'blitz-inventory-' + new Date().toISOString().slice(0,10) + '.xlsx');
+    } catch (e) { console.error('Excel export error:', e); alert('Failed to export inventory'); }
+  };
+
+  const exportExpensesExcel = () => {
+    try {
+      const rows = (expenses||[]).map(e => ({
+        Description: e.description,
+        Amount: e.amount || 0,
+        Date: e.createdAt ? new Date(e.createdAt).toLocaleDateString() : '',
+      }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [{ wch: 40 }, { wch: 14 }, { wch: 15 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
+      XLSX.writeFile(wb, 'blitz-expenses-' + new Date().toISOString().slice(0,10) + '.xlsx');
+    } catch (e) { console.error('Excel export error:', e); alert('Failed to export expenses'); }
+  };
+
+  if (!loggedIn) {
+    if (needsSetup) {
+      return (
+        <div className="blitz-admin-login"><div className="blitz-admin-login-card"><div className="blitz-admin-logo">⚡</div>
+          <h1>Blitz Mall <span>Setup</span></h1><p className="blitz-admin-muted">Create your owner account</p>
+          <form onSubmit={handleSetup}>
+            <input className="owner-field" type="text" placeholder="Your name" value={setupName} onChange={e => setSetupName(e.target.value)} required />
+            <input className="owner-field" type="text" placeholder="Username" value={setupUsername} onChange={e => setSetupUsername(e.target.value)} required />
+            <input className="owner-field" type="password" placeholder="Password (min 6 chars)" value={setupPassword} onChange={e => setSetupPassword(e.target.value)} minLength={6} required />
+            <button className="blitz-admin-btn" type="submit">Create Owner Account</button>
+          </form>
+        </div></div>
+      );
+    }
+    return (
+      <div className="blitz-admin-login"><div className="blitz-admin-login-card"><div className="blitz-admin-logo">⚡</div>
+        <h1>Blitz Mall <span>HQ</span></h1><p className="blitz-admin-muted">Sign in to manage your store</p>
+        <form onSubmit={login}>
+          <input className="owner-field" type="text" placeholder="Username" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} required />
+          <input className="owner-field" type="password" placeholder="Password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} required />
+          {loginError && <p style={{color:'var(--red)',fontSize:'.85rem'}}>{loginError}</p>}
+          <button className="blitz-admin-btn" type="submit">Sign In</button>
+        </form>
+      </div></div>
+    );
+  }
+
+  // Determine which tabs are visible based on role
+  const isCashier = user?.role === 'cashier';
+  const allTabs = [
+    { id: 'sales', label: '🧾 Sell' },
+    { id: 'inventory', label: `📦 Inventory (${products.length})` },
+    { id: 'orders', label: `🛒 Orders (${orders.length})` },
+    { id: 'records', label: '📊 Records' },
+    { id: 'expenses', label: '💸 Expenses' },
+    { id: 'credit', label: '🧍 Credit' },
+    { id: 'reviews', label: '⭐ Reviews' },
+    { id: 'loyalty', label: '🎁 Loyalty' },
+    { id: 'staff', label: '👷 Staff' },
+    { id: 'branches', label: '🏪 Branches' },
+  ];
+  const visibleTabs = isCashier
+    ? allTabs.filter(t => t.id === 'sales')
+    : allTabs;
+  // If cashier, make sure current tab is visible
+  const safeTab = isCashier && tab !== 'sales' ? 'sales' : tab;
 
   const productList = Array.isArray(products) ? products : [];
   const filtered = productList.filter(p => !search.trim() || p.name.toLowerCase().includes(search.toLowerCase()) || (p.barcode||'').includes(search) || (p.category||'').toLowerCase().includes(search.toLowerCase()));
   const P = summary?.summary?.[period] ?? { revenue:0, profit:0, expenses:0, net:0, cash:0, mpesa:0, count:0 };
   const periodLabel = { today: 'Today', week: 'This week', month: 'This month', year: 'This year', all: 'All time' };
   const totalAlerts = alerts.out.length + alerts.low.length + (alerts.expired||[]).length;
-  const receiptWALink = receipt && receipt.phone ? waLink(receipt.phone, 'BLITZ MALL RECEIPT\n' + receipt.date.toLocaleString() + '\nCashier: ' + receipt.cashier + '\n' + receipt.items.map(i => i.name + ' x' + i.qty + ' = KES ' + (i.price*i.qty)).join('\n') + '\nTotal: KES ' + receipt.total + (receipt.change > 0 ? '\nChange: KES ' + receipt.change : '') + '\nPayment: ' + receipt.paymentMethod + '\nThank you for shopping at Brilliant!') : null;
+  const formatReceiptMsg = (r) => {
+    const line = '━'.repeat(20);
+    const items = r.items.map(i => `• ${i.name} x${i.qty}  KES ${(i.price*i.qty).toLocaleString()}`).join('\n');
+    return `⚡️ *BLITZ MALL - OFFICIAL RECEIPT* ⚡️\n${line}\n📅 ${r.date.toLocaleString()}\n👤 Cashier: ${r.cashier}\n💳 ${r.paymentMethod}\n${line}\n${items}\n${line}\n*💰 TOTAL: KES ${r.total.toLocaleString()}*${r.change > 0 ? '\n💵 Change: KES ' + r.change.toLocaleString() : ''}\n${line}\n🏪 Brilliant Shop\n📞 07XX XXX XXX\n✅ Thank you for shopping with us!\n⭐ Rate us on the app!`;
+  };
+  const receiptWALink = receipt && receipt.phone ? waLink(receipt.phone, formatReceiptMsg(receipt)) : null;
 
   return (
     <div className="blitz-hq-shell" style={{ minHeight: '100vh', background: '#0a0a0c', color: '#f4f4f6' }}>
       <header className="blitz-admin-header">
         <div className="blitz-admin-brand"><span className="blitz-admin-logo sm">⚡</span> Blitz Mall <b>HQ</b></div>
         <div className="blitz-admin-head-right">
+          {offline && <span className="blitz-admin-muted" style={{fontSize:'.75rem',color:'var(--orange)'}}>📡 Offline</span>}
+          {pendingSync > 0 && <span className="blitz-admin-muted" style={{fontSize:'.75rem',color:'var(--gold)'}}>⏳ {pendingSync}</span>}
+          {user?.role === 'owner' && branches.length > 0 && (
+            <select value={activeBranchId||''} onChange={e => setActiveBranchId(e.target.value||null)}
+              style={{background:'var(--bg-2)',color:'var(--text)',border:'1px solid var(--line)',borderRadius:8,padding:'4px 8px',fontSize:'.75rem',fontFamily:'inherit'}}>
+              <option value="">🏪 All Branches</option>
+              {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+            </select>
+          )}
           <button className={"blitz-admin-bell" + (alerts.out.length ? " ring" : "")} onClick={() => setMuted(m => !m)}>
             {muted ? "🔕" : "🔔"}{totalAlerts > 0 && <i className="blitz-admin-bell-dot">{totalAlerts}</i>}
           </button>
-          <button className="blitz-admin-exit" onClick={() => setLoggedIn(false)}>Exit</button>
+          {!isCashier && <span className="blitz-admin-muted" style={{fontSize:'.78rem'}}>{user?.name} · {user?.role}</span>}
+          <button className="blitz-admin-exit" onClick={() => { localStorage.removeItem('bm_token'); localStorage.removeItem('bm_user'); setLoggedIn(false); setUser(null); }}>Exit</button>
         </div>
       </header>
 
@@ -280,17 +770,12 @@ function Admin() {
       )}
 
       <div className="blitz-admin-tabs">
-        <button className={tab==="sales"?"on":""} onClick={() => setTab("sales")}>🧾 Sell</button>
-        <button className={tab==="inventory"?"on":""} onClick={() => setTab("inventory")}>📦 Inventory ({products.length})</button>
-        <button className={tab==="orders"?"on":""} onClick={() => setTab("orders")}>🛒 Orders ({orders.length})</button>
-        <button className={tab==="records"?"on":""} onClick={() => setTab("records")}>📊 Records</button>
-        <button className={tab==="expenses"?"on":""} onClick={() => setTab("expenses")}>💸 Expenses</button>
-        <button className={tab==="credit"?"on":""} onClick={() => setTab("credit")}>🧍 Credit</button>
-        <button className={tab==="reviews"?"on":""} onClick={() => setTab("reviews")}>⭐ Reviews</button>
-        <button className={tab==="staff"?"on":""} onClick={() => setTab("staff")}>👷 Staff</button>
+        {visibleTabs.map(t => (
+          <button key={t.id} className={safeTab===t.id?"on":""} onClick={() => setTab(t.id)}>{t.label}</button>
+        ))}
       </div>
 
-      {tab === "sales" && (
+      {safeTab === "sales" && (
         <div className="blitz-admin-body pos-wrap">
           <div className="pos-left">
             <div className="pos-head-row">
@@ -307,7 +792,14 @@ function Admin() {
               <span>📷</span>
               <input ref={scanRef} autoFocus value={scan} onChange={e => setScan(e.target.value)} placeholder="Scan barcode or type product name…" />
               <button className="blitz-admin-btn small" type="submit">Find</button>
+              {window.BarcodeDetector && <button type="button" className="blitz-admin-btn small" onClick={cameraScan ? stopCamera : startCamera} style={{background:'var(--grad)',padding:'10px 12px',fontSize:'.85rem'}}>{cameraScan ? '✕' : '📸'}</button>}
             </form>
+            {cameraScan && (
+              <div style={{position:'relative',marginBottom:12,borderRadius:14,overflow:'hidden',background:'#000',maxHeight:280}}>
+                <video ref={cameraRef} autoPlay playsInline muted style={{width:'100%',height:'auto',display:'block'}} />
+                <button type="button" onClick={stopCamera} style={{position:'absolute',top:8,right:8,background:'rgba(0,0,0,.6)',color:'#fff',border:'none',borderRadius:8,padding:'5px 10px',cursor:'pointer',fontSize:'.8rem'}}>✕ Close</button>
+              </div>
+            )}
             {scanMatches.length > 0 && (
               <div className="pos-suggest">
                 {scanMatches.map(p => (
@@ -395,9 +887,9 @@ function Admin() {
         </div>
       )}
 
-      {tab === "inventory" && (
+      {safeTab === "inventory" && (
         <div className="blitz-admin-body">
-          <div className="blitz-admin-row-between"><h2>Inventory</h2><button className="blitz-admin-btn small" onClick={() => { showForm ? resetForm() : setShowForm(true); }}>{showForm ? "✕ Cancel" : "➕ Add stock"}</button></div>
+          <div className="blitz-admin-row-between"><h2>Inventory</h2><div style={{display:"flex",gap:6,flexWrap:"wrap"}}><button className="blitz-admin-btn small" onClick={exportInventoryExcel}>📊 Excel</button><button className="blitz-admin-btn small" onClick={() => { showForm ? resetForm() : setShowForm(true); }}>{showForm ? "✕ Cancel" : "➕ Add stock"}</button></div></div>
           {showForm && (
             <form className="blitz-admin-form" onSubmit={submitProduct}>
               <h3>{editingId ? "Edit item" : "Add new stock"}</h3>
@@ -437,7 +929,7 @@ function Admin() {
         </div>
       )}
 
-      {tab === "orders" && (
+      {safeTab === "orders" && (
         <div className="blitz-admin-body"><h2>Orders</h2>
           {orders.length === 0 ? <p className="blitz-admin-empty">No orders yet</p> : (
             <div className="blitz-admin-list">{orders.map(o => (
@@ -445,18 +937,36 @@ function Admin() {
                 <div className="blitz-admin-order-top"><b>{o.customerName}</b><span className="blitz-admin-phone">{o.customerId}</span></div>
                 <div className="blitz-admin-order-items">{o.items.map((it,k) => <p key={k}>{it.name} ×{it.quantity} — {money(it.price*it.quantity)}</p>)}</div>
                 <div className="blitz-admin-order-foot"><b>{money(o.totalPrice)}</b><span className="blitz-admin-muted">{new Date(o.createdAt).toLocaleString()}</span></div>
-                <select value={o.status} onChange={e => setStatus(o._id, e.target.value)}>
-                  <option value="pending">⏳ Pending</option><option value="packed">📦 Packed</option><option value="on_the_way">🚚 On the way</option><option value="delivered">✅ Delivered</option>
-                </select>
+                <div style={{display:'flex',gap:6,alignItems:'center',marginTop:6}}>
+                  <select value={o.status} onChange={e => setStatus(o._id, e.target.value)} style={{flex:1}}>
+                    <option value="pending">⏳ Pending</option><option value="packed">📦 Packed</option><option value="on_the_way">🚚 On the way</option><option value="delivered">✅ Delivered</option>
+                  </select>
+                  {o.status === 'delivered' && o.customerId && (
+                    <a className="cr-remind" href={waLink(o.customerId,
+                      '⚡️ *BLITZ MALL - DELIVERY CONFIRMED* ⚡️\n' +
+                      '━'.repeat(20) + '\n' +
+                      '✅ Your order has been *delivered*!\n' +
+                      '📅 ' + new Date().toLocaleString() + '\n' +
+                      '━'.repeat(20) + '\n' +
+                      (o.items||[]).map(it => '• ' + it.name + ' x' + (it.quantity||it.qty||1) + ' — KES ' + ((it.price||0)*(it.quantity||it.qty||1)).toLocaleString()).join('\n') + '\n' +
+                      '━'.repeat(20) + '\n' +
+                      '*💰 TOTAL: KES ' + (o.totalPrice||0).toLocaleString() + '*\n' +
+                      '━'.repeat(20) + '\n' +
+                      '🏪 Brilliant Shop\n' +
+                      '🙏 Thank you for ordering with Blitz Mall!\n' +
+                      '⭐ Please leave a review on the app!'
+                    )} target="_blank" rel="noreferrer" style={{fontSize:'.75rem',whiteSpace:'nowrap'}}>📱 WhatsApp</a>
+                  )}
+                </div>
               </div>
             ))}</div>
           )}
         </div>
       )}
 
-      {tab === "records" && (
+      {safeTab === "records" && (
         <div className="blitz-admin-body">
-          <div className="blitz-admin-row-between"><h2>Records</h2><div style={{display:"flex",gap:10}}><button className="blitz-admin-btn small" onClick={loadSummary}>↻ Refresh</button><button className="blitz-admin-btn small" onClick={exportBackup}>⬇ Backup</button></div></div>
+          <div className="blitz-admin-row-between"><h2>Records</h2><div style={{display:"flex",gap:6,flexWrap:"wrap"}}><button className="blitz-admin-btn small" onClick={loadSummary}>↻ Refresh</button><button className="blitz-admin-btn small" onClick={exportSalesPDF}>📄 PDF</button><button className="blitz-admin-btn small" onClick={exportBackup}>⬇ JSON</button></div></div>
           <div className="rec-periods">{Object.keys(periodLabel).map(k => <button key={k} className={period===k?"on":""} onClick={() => setPeriod(k)}>{periodLabel[k]}</button>)}</div>
           {!summary ? <p className="blitz-admin-empty">Loading…</p> : (
             <>
@@ -466,32 +976,165 @@ function Admin() {
                 <div className="rec-card"><span>Expenses</span><b className="red">{money(P.expenses)}</b><small>{periodLabel[period].toLowerCase()}</small></div>
                 <div className="rec-card big"><span>Net profit</span><b className={P.net>=0?"green":"red"}>{money(P.net)}</b><small>profit − expenses</small></div>
               </div>
-              <div className="rec-split"><h3>Cash vs M-Pesa</h3><div className="rec-bar"><div className="rec-bar-cash" style={{flex:P.cash||0.001}}/><div className="rec-bar-mpesa" style={{flex:P.mpesa||0.001}}/></div><div className="rec-split-legend"><span>💵 Cash {money(P.cash)}</span><span>📱 M-Pesa {money(P.mpesa)}</span></div></div>
-              <div className="rec-two">
-                <div className="rec-panel"><h3>🔥 Best sellers</h3>{summary.best.length === 0 ? <p className="blitz-admin-empty sm">No sales yet.</p> : summary.best.map(b => <div className="rec-line" key={b.name}><span>{b.name}</span><b>{b.qty} sold</b></div>)}</div>
-                <div className="rec-panel"><h3>⚠ Alerts</h3>
-                  {[...(summary.expired||[]),...summary.out,...(summary.expiringSoon||[]),...summary.low].length === 0 ? <p className="blitz-admin-empty sm">All good.</p> : (<>
-                    {(summary.expired||[]).map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="red">Expired {fmt(p.expiryDate)}</b></div>)}
-                    {summary.out.map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="red">Out of stock</b></div>)}
-                    {(summary.expiringSoon||[]).map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="gold">Exp {fmt(p.expiryDate)}</b></div>)}
-                    {summary.low.map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="gold">Low: {p.stock}</b></div>)}
-                  </>)}
-                </div>
-              </div>
+              {/* === CHARTS === */}
+              {(() => {
+                // Build period comparison data
+                const periodKeys = ['today','week','month','year'];
+                const periodNames = { today:'Today', week:'This Week', month:'This Month', year:'This Year' };
+                const periodData = periodKeys.map(k => ({
+                  name: periodNames[k],
+                  Revenue: Math.round((summary.summary?.[k]?.revenue || 0)),
+                  Profit: Math.round((summary.summary?.[k]?.profit || 0)),
+                }));
+
+                // Payment split data
+                const payData = [
+                  { name: 'Cash', value: P.cash || 0 },
+                  { name: 'M-Pesa', value: P.mpesa || 0 },
+                ];
+                const PAY_COLORS = ['#36d399', '#ff7a1a'];
+
+                // Best sellers chart data
+                const bestData = (summary.best||[]).slice(0, 8).map(b => ({
+                  name: b.name.length > 18 ? b.name.slice(0, 16) + '..' : b.name,
+                  Sold: b.qty,
+                }));
+
+                const chartStyle = { background:'var(--card)', border:'1px solid var(--line)', borderRadius:16, padding:'18px', marginBottom:16 };
+                const tooltipStyle = { background:'#16161b', border:'1px solid #26262e', borderRadius:8, color:'#f4f4f6', fontSize:'.8rem' };
+
+                return (
+                  <>
+                    {/* Period comparison bar chart */}
+                    <div style={chartStyle}>
+                      <h3 style={{fontSize:'.95rem',marginBottom:12}}>📈 Revenue vs Profit by Period</h3>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <BarChart data={periodData}>
+                          <XAxis dataKey="name" tick={{fill:'#8a8a96',fontSize:11}} axisLine={{stroke:'#26262e'}} tickLine={false} />
+                          <YAxis tick={{fill:'#8a8a96',fontSize:11}} axisLine={false} tickLine={false} />
+                          <Tooltip contentStyle={tooltipStyle} formatter={(v) => 'KES ' + v.toLocaleString()} />
+                          <Bar dataKey="Revenue" fill="#ffd24a" radius={[4,4,0,0]} maxBarSize={40} />
+                          <Bar dataKey="Profit" fill="#36d399" radius={[4,4,0,0]} maxBarSize={40} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Payment split + Best sellers side by side */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+                      {/* Cash vs M-Pesa pie */}
+                      <div style={{...chartStyle,marginBottom:0}}>
+                        <h3 style={{fontSize:'.95rem',marginBottom:12}}>💳 Payment Split</h3>
+                        {P.cash + P.mpesa > 0 ? (
+                          <ResponsiveContainer width="100%" height={160}>
+                            <PieChart>
+                              <Pie data={payData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={4} dataKey="value">
+                                {payData.map((e, i) => <Cell key={e.name} fill={PAY_COLORS[i]} />)}
+                              </Pie>
+                              <Tooltip contentStyle={tooltipStyle} formatter={(v) => 'KES ' + (Math.round(v*100)/100).toLocaleString()} />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        ) : <p className="blitz-admin-empty sm">No data</p>}
+                        <div style={{display:'flex',justifyContent:'center',gap:16,marginTop:8,fontSize:'.78rem'}}>
+                          <span><span style={{color:'#36d399'}}>●</span> Cash {money(P.cash)}</span>
+                          <span><span style={{color:'#ff7a1a'}}>●</span> M-Pesa {money(P.mpesa)}</span>
+                        </div>
+                      </div>
+
+                      {/* Best sellers bar chart */}
+                      <div style={{...chartStyle,marginBottom:0}}>
+                        <h3 style={{fontSize:'.95rem',marginBottom:12}}>🔥 Best Sellers</h3>
+                        {bestData.length > 0 ? (
+                          <ResponsiveContainer width="100%" height={160}>
+                            <BarChart data={bestData} layout="vertical">
+                              <XAxis type="number" tick={{fill:'#8a8a96',fontSize:10}} axisLine={false} tickLine={false} />
+                              <YAxis type="category" dataKey="name" tick={{fill:'#f4f4f6',fontSize:10}} axisLine={false} tickLine={false} width={80} />
+                              <Tooltip contentStyle={tooltipStyle} formatter={(v) => v + ' sold'} />
+                              <Bar dataKey="Sold" fill="#ff7a1a" radius={[0,4,4,0]} maxBarSize={24} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        ) : <p className="blitz-admin-empty sm">No sales yet.</p>}
+                      </div>
+                    </div>
+
+                    {/* AI Predictions */}
+                    {predictions && (
+                      <div style={chartStyle}>
+                        <h3 style={{fontSize:'.95rem',marginBottom:12}}>🧠 AI Predictions</h3>
+                        {predictions.forecast && predictions.forecast.avgDaily > 0 && (
+                          <div style={{background:'var(--bg-2)',borderRadius:12,padding:'14px',marginBottom:12}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                              <span style={{fontSize:'.85rem',color:'var(--muted)'}}>📈 7-Day Sales Forecast</span>
+                              <b style={{color:'var(--gold)',fontSize:'1.1rem'}}>{money(predictions.forecast.next7Days)}</b>
+                            </div>
+                            <div style={{fontSize:'.8rem',color:'var(--muted)'}}>Avg daily: {money(predictions.forecast.avgDaily)} · Based on {predictions.forecast.dataPoints} days of data</div>
+                          </div>
+                        )}
+                        {predictions.restock && predictions.restock.length > 0 && (
+                          <>
+                            <h4 style={{fontSize:'.85rem',color:'var(--orange)',marginBottom:8}}>⚠ Re-stock Alerts</h4>
+                            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                              {predictions.restock.slice(0, 10).map((r, i) => (
+                                <div className="rec-line" key={i}>
+                                  <span>{r.name}</span>
+                                  <span>
+                                    <b className={r.priority === 'critical' || r.priority === 'high' ? 'red' : 'gold'}>
+                                      {r.priority === 'critical' ? 'OUT' : r.priority === 'high' ? Math.round(r.daysLeft)+'d' : Math.round(r.daysLeft)+'d left'}
+                                    </b>
+                                    <span className="blitz-admin-muted" style={{marginLeft:6,fontSize:'.75rem'}}>(stock: {r.currentStock}, rate: {r.dailyRate}/day)</span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {predictions.slowMoving && predictions.slowMoving.length > 0 && (
+                          <>
+                            <h4 style={{fontSize:'.85rem',color:'var(--muted)',marginTop:12,marginBottom:8}}>🐢 Slow-Moving Products</h4>
+                            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                              {predictions.slowMoving.slice(0, 8).map((r, i) => (
+                                <div className="rec-line" key={i}>
+                                  <span>{r.name}</span>
+                                  <span className="blitz-admin-muted">{r.currentStock} in stock · ~{r.monthlyRate}/month</span>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                        {(!predictions.forecast || predictions.forecast.avgDaily <= 0) && (!predictions.restock || predictions.restock.length === 0) && (!predictions.slowMoving || predictions.slowMoving.length === 0) && (
+                          <p className="blitz-admin-empty sm">Not enough sales data yet. Keep selling!</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Alerts panel */}
+                    <div style={chartStyle}>
+                      <h3 style={{fontSize:'.95rem',marginBottom:12}}>⚠ Alerts</h3>
+                      {[...(summary.expired||[]),...(summary.out||[]),...(summary.expiringSoon||[]),...(summary.low||[])].length === 0 ? <p className="blitz-admin-empty sm">All good.</p> : (
+                        <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                          {(summary.expired||[]).map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="red">Expired {fmt(p.expiryDate)}</b></div>)}
+                          {(summary.out||[]).map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="red">Out of stock</b></div>)}
+                          {(summary.expiringSoon||[]).map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="gold">Exp {fmt(p.expiryDate)}</b></div>)}
+                          {(summary.low||[]).map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="gold">Low: {p.stock}</b></div>)}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </>
           )}
         </div>
       )}
 
-      {tab === "expenses" && (
-        <div className="blitz-admin-body"><h2>Expenses</h2>
-          {summary && <div className="exp-summary">Today: <b className="red">{money(summary.summary.today.expenses)}</b> · This month: <b className="red">{money(summary.summary.month.expenses)}</b></div>}
+      {safeTab === "expenses" && (
+        <div className="blitz-admin-body"><div className="blitz-admin-row-between"><h2>Expenses</h2><button className="blitz-admin-btn small" onClick={exportExpensesExcel}>📊 Excel</button></div>
+          {summary?.summary?.today && <div className="exp-summary">Today: <b className="red">{money(summary.summary.today.expenses)}</b> · This month: <b className="red">{money(summary.summary.month?.expenses || 0)}</b></div>}
           <form className="exp-form" onSubmit={addExpense}><input value={expDesc} onChange={e => setExpDesc(e.target.value)} placeholder="What for? e.g. Transport, Rent" required /><input type="number" step="0.01" value={expAmount} onChange={e => setExpAmount(e.target.value)} placeholder="Amount KES" required /><button className="blitz-admin-btn small" type="submit">Add</button></form>
           {expenses.length === 0 ? <p className="blitz-admin-empty">No expenses yet.</p> : <div className="blitz-admin-list">{expenses.map(x => <div className="exp-row" key={x._id}><div><b>{x.description}</b><span className="blitz-admin-muted"> · {new Date(x.createdAt).toLocaleDateString()}</span></div><div className="exp-right"><b className="red">{money(x.amount)}</b><button className="pos-void" onClick={() => delExpense(x._id)}>delete</button></div></div>)}</div>}
         </div>
       )}
 
-      {tab === "credit" && (() => {
+      {safeTab === "credit" && (() => {
         const unpaid = credit.filter(c => !c.paid); const paid = credit.filter(c => c.paid);
         const owed = unpaid.reduce((s,c) => s + (c.amount||0), 0);
         return (
@@ -510,7 +1153,7 @@ function Admin() {
         );
       })()}
 
-      {tab === "reviews" && (() => {
+      {safeTab === "reviews" && (() => {
         const count = reviews.length; const avg = count ? reviews.reduce((s,r) => s+(r.rating||0),0)/count : 0; const complaints = reviews.filter(r => r.rating<=2).length;
         return (
           <div className="blitz-admin-body"><h2>Reviews</h2>
@@ -520,11 +1163,212 @@ function Admin() {
         );
       })()}
 
-      {tab === "staff" && (
-        <div className="blitz-admin-body"><h2>Staff & Cashiers</h2>
-          <p className="blitz-admin-muted" style={{marginBottom:16}}>Add staff here. They appear in the cashier selector on the Sell tab so each sale is attributed correctly. Full secure staff logins come with the security/deployment phase.</p>
-          <form className="exp-form" onSubmit={addStaff}><input value={newStaffName} onChange={e => setNewStaffName(e.target.value)} placeholder="Staff name e.g. Jane" required /><button className="blitz-admin-btn small" type="submit">Add cashier</button></form>
-          {staffList.length === 0 ? <p className="blitz-admin-empty">No staff added yet.</p> : <div className="blitz-admin-list">{staffList.map(s => <div className="exp-row" key={s._id}><div><b>{s.name}</b><span className="blitz-admin-muted"> · {s.role||"Cashier"} · Added {new Date(s.createdAt).toLocaleDateString()}</span></div><button className="pos-void" onClick={() => delStaff(s._id)}>remove</button></div>)}</div>}
+      {safeTab === "loyalty" && (
+        <div className="blitz-admin-body">
+          <h2>🎁 Loyalty & Rewards</h2>
+          <p className="blitz-admin-muted" style={{marginBottom:16}}>Customers earn 1 point per KES 100 spent. 100 points = KES 500 cashback. Tiers: Bronze (0), Silver (25K+), Gold (100K+), Platinum (500K+).</p>
+
+          {/* Customer Lookup */}
+          <div style={{background:'var(--card)',border:'1px solid var(--line)',borderRadius:16,padding:'16px',marginBottom:16}}>
+            <h3 style={{fontSize:'.95rem',marginBottom:10}}>🔍 Lookup Customer</h3>
+            <div className="exp-form" style={{display:'flex',gap:8}}>
+              <input type="tel" value={loyaltyPhone} onChange={e => setLoyaltyPhone(e.target.value)} placeholder="Enter phone number" style={{flex:1}} />
+              <button className="blitz-admin-btn small" onClick={lookupLoyalty}>Search</button>
+            </div>
+            {loyaltyData && (
+              loyaltyData.exists ? (
+                <div style={{marginTop:12,padding:'12px',background:'var(--bg-2)',borderRadius:12}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <div>
+                      <b style={{fontSize:'1.1rem'}}>{loyaltyData.customerName || 'Customer'}</b>
+                      <span style={{display:'inline-block',marginLeft:8,padding:'2px 8px',borderRadius:6,fontSize:'.75rem',background:
+                        loyaltyData.tier === 'Platinum' ? 'linear-gradient(135deg,#e2d7a8,#b8a76a)' :
+                        loyaltyData.tier === 'Gold' ? 'linear-gradient(135deg,#ffd24a,#ff7a1a)' :
+                        loyaltyData.tier === 'Silver' ? 'linear-gradient(135deg,#c0c0c0,#8a8a96)' :
+                        'linear-gradient(135deg,#cd7f32,#a0522d)',
+                        color: loyaltyData.tier === 'Platinum' ? '#000' : '#fff'
+                      }}>{loyaltyData.tier}</span>
+                    </div>
+                    <b style={{fontSize:'1.3rem',color:'var(--gold)'}}>{loyaltyData.points} pts</b>
+                  </div>
+                  <div style={{marginTop:8,fontSize:'.85rem',color:'var(--muted)'}}>Total spent: {money(loyaltyData.totalSpent)}</div>
+                  <div style={{marginTop:8,fontSize:'.85rem'}}>Cashback value: <b style={{color:'var(--green)'}}>{money(loyaltyData.points * 5)}</b></div>
+                  <button className="blitz-admin-btn small" style={{marginTop:10}} onClick={redeemPoints}>🎯 Redeem Points</button>
+                </div>
+              ) : (
+                <p className="blitz-admin-muted" style={{marginTop:8}}>{loyaltyData.message}</p>
+              )
+            )}
+          </div>
+
+          {/* Coupon Management */}
+          <div style={{background:'var(--card)',border:'1px solid var(--line)',borderRadius:16,padding:'16px',marginBottom:16}}>
+            <h3 style={{fontSize:'.95rem',marginBottom:10}}>🏷️ Create Coupon</h3>
+            <form onSubmit={createCoupon} style={{display:'flex',flexDirection:'column',gap:8}}>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                <input value={couponCode} onChange={e => setCouponCode(e.target.value)} placeholder="Coupon code e.g. SAVE10" required />
+                <select value={couponType} onChange={e => setCouponType(e.target.value)} style={{background:'var(--bg-2)',color:'var(--text)',border:'1px solid var(--line)',borderRadius:10,padding:'10px'}}>
+                  <option value="percent">% Discount</option>
+                  <option value="fixed">Fixed KES</option>
+                </select>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+                <input type="number" value={couponValue} onChange={e => setCouponValue(e.target.value)} placeholder={couponType==='percent'?'% off e.g. 10':'KES off e.g. 500'} required />
+                <input type="number" value={couponMin} onChange={e => setCouponMin(e.target.value)} placeholder="Min purchase" />
+                <input type="number" value={couponMaxUses} onChange={e => setCouponMaxUses(e.target.value)} placeholder="Max uses" />
+              </div>
+              <input type="date" value={couponExpiry} onChange={e => setCouponExpiry(e.target.value)} placeholder="Expiry date" />
+              <button className="blitz-admin-btn small" type="submit">Create Coupon</button>
+            </form>
+            {coupons.length > 0 && (
+              <div style={{marginTop:12}}>
+                <h4 style={{fontSize:'.85rem',color:'var(--muted)',marginBottom:8}}>Existing coupons</h4>
+                <div className="blitz-admin-list">
+                  {coupons.map(c => {
+                    const expired = c.expiresAt && new Date(c.expiresAt) < new Date();
+                    return (
+                      <div className="exp-row" key={c._id} style={{opacity:c.active&&!expired?1:.4}}>
+                        <div>
+                          <b style={{color:'var(--gold)'}}>{c.code}</b>
+                          <span className="blitz-admin-muted"> · {c.type==='percent'?c.value+'% off':'KES '+c.value+' off'}{c.minPurchase>0?' · min KES '+c.minPurchase:''}{c.maxUses>0?' · used '+c.usedCount+'/'+c.maxUses:''}{expired?' · EXPIRED':''}</span>
+                        </div>
+                        <div style={{display:'flex',gap:6}}>
+                          <button className="blitz-admin-btn small" onClick={() => toggleCoupon(c._id, c.active)} style={{fontSize:'.75rem'}}>{c.active ? 'Disable' : 'Enable'}</button>
+                          <button className="pos-void" onClick={() => delCoupon(c._id)}>delete</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Top Members */}
+          {loyaltyMembers.length > 0 && (
+            <div style={{background:'var(--card)',border:'1px solid var(--line)',borderRadius:16,padding:'16px',marginBottom:16}}>
+              <h3 style={{fontSize:'.95rem',marginBottom:10}}>🏆 Top Loyalty Members</h3>
+              <div className="blitz-admin-list">
+                {loyaltyMembers.slice(0, 20).map((m, i) => (
+                  <div className="exp-row" key={m._id}>
+                    <div>
+                      <span style={{color:'var(--gold)',marginRight:8}}>#{i+1}</span>
+                      <b>{m.customerName || m.phone}</b>
+                      <span className="blitz-admin-muted"> · {m.phone}</span>
+                    </div>
+                    <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                      <span style={{
+                        padding:'2px 8px',borderRadius:6,fontSize:'.7rem',
+                        background: m.tier === 'Platinum' ? 'linear-gradient(135deg,#e2d7a8,#b8a76a)' :
+                                   m.tier === 'Gold' ? 'linear-gradient(135deg,#ffd24a,#ff7a1a)' :
+                                   m.tier === 'Silver' ? 'linear-gradient(135deg,#c0c0c0,#8a8a96)' :
+                                   'linear-gradient(135deg,#cd7f32,#a0522d)',
+                        color: m.tier === 'Platinum' ? '#000' : '#fff'
+                      }}>{m.tier}</span>
+                      <b style={{color:'var(--gold)',fontSize:'.85rem'}}>{m.points} pts</b>
+                      <span className="blitz-admin-muted">{money(m.totalSpent)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {safeTab === "branches" && user?.role === 'owner' && (
+        <div className="blitz-admin-body">
+          <h2>🏪 Branches</h2>
+          <p className="blitz-admin-muted" style={{marginBottom:16}}>Manage your shop branches. Staff assigned to a branch will only see that branch's data.</p>
+          <form className="exp-form" onSubmit={async (e) => {
+            e.preventDefault();
+            if (!branchForm.name.trim()) return;
+            try {
+              const r = await authPost(API_URL + '/admin/branches', branchForm);
+              if ((await r.json()).success) { setBranchForm({ name:'', location:'', phone:'', email:'' }); loadBranches(); }
+            } catch (e) { console.error(e); }
+          }}>
+            <input value={branchForm.name} onChange={e => setBranchForm(f=>({...f,name:e.target.value}))} placeholder="Branch name e.g. Westlands" required />
+            <input value={branchForm.location} onChange={e => setBranchForm(f=>({...f,location:e.target.value}))} placeholder="Location e.g. Nairobi" />
+            <input value={branchForm.phone} onChange={e => setBranchForm(f=>({...f,phone:e.target.value}))} placeholder="Phone" />
+            <button className="blitz-admin-btn small" type="submit">➕ Add Branch</button>
+          </form>
+          {branches.length === 0 ? <p className="blitz-admin-empty">No branches yet. Add your first branch.</p> : (
+            <div className="blitz-admin-list">
+              {branches.map(b => (
+                <div className="exp-row" key={b._id}>
+                  <div style={{flex:1}}>
+                    <b>{b.name}</b>
+                    <span className="blitz-admin-muted"> · {b.location||'No location'}{b.phone?' · '+b.phone:''}</span>
+                  </div>
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    <span style={{padding:'2px 8px',borderRadius:6,fontSize:'.7rem',background:b.active?'rgba(54,211,153,.15)':'rgba(255,45,45,.15)',color:b.active?'var(--green)':'var(--red)'}}>{b.active?'Active':'Inactive'}</span>
+                    <button className="pos-void" onClick={async () => {
+                      if (!window.confirm('Delete branch ' + b.name + '?')) return;
+                      try { await authDelete(API_URL + '/admin/branches/' + b._id); loadBranches(); }
+                      catch (e) { console.error(e); }
+                    }}>delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {safeTab === "staff" && (
+        <div className="blitz-admin-body">
+          <h2>Staff & Cashiers</h2>
+
+          {/* Non-login cashier names for POS selector */}
+          <div style={{background:'var(--card)',border:'1px solid var(--line)',borderRadius:16,padding:'16px',marginBottom:16}}>
+            <h3 style={{fontSize:'.95rem',marginBottom:10}}>👤 Cashier Names (POS Selector)</h3>
+            <p className="blitz-admin-muted" style={{marginBottom:10,fontSize:'.8rem'}}>Add cashier names here for the Sell tab cashier dropdown. No login needed.</p>
+            <form className="exp-form" onSubmit={addStaff} style={{marginBottom:12}}><input value={newStaffName} onChange={e => setNewStaffName(e.target.value)} placeholder="Staff name e.g. Jane" required /><button className="blitz-admin-btn small" type="submit">Add</button></form>
+            {staffList.length === 0 ? <p className="blitz-admin-empty">No cashier names added.</p> : <div className="blitz-admin-list">{staffList.map(s => <div className="exp-row" key={s._id}><div><b>{s.name}</b><span className="blitz-admin-muted"> · {s.role||"Cashier"} · Added {new Date(s.createdAt).toLocaleDateString()}</span></div><button className="pos-void" onClick={() => delStaff(s._id)}>remove</button></div>)}</div>}
+          </div>
+
+          {/* Secure login accounts (owner only) */}
+          {user?.role === 'owner' && (
+            <div style={{background:'var(--card)',border:'1px solid var(--line)',borderRadius:16,padding:'16px',marginBottom:16}}>
+              <h3 style={{fontSize:'.95rem',marginBottom:10}}>🔐 Secure Staff Logins</h3>
+              <p className="blitz-admin-muted" style={{marginBottom:10,fontSize:'.8rem'}}>Create login accounts for staff. Each user gets role-based access and can sign in at the HQ login screen. <b>Managers</b> can manage inventory/orders. <b>Cashiers</b> can only use the Sell tab and see their assigned branch data.</p>
+              <form onSubmit={createUser} style={{display:'flex',flexDirection:'column',gap:8,marginBottom:16}}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                  <input value={newUsername} onChange={e => setNewUsername(e.target.value)} placeholder="Username" required />
+                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Password (min 6 chars)" minLength={6} required />
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+                  <input value={newUserName} onChange={e => setNewUserName(e.target.value)} placeholder="Full name (optional)" />
+                  <select value={newUserRole} onChange={e => setNewUserRole(e.target.value)} style={{background:'var(--bg-2)',color:'var(--text)',border:'1px solid var(--line)',borderRadius:10,padding:'10px',fontFamily:'inherit'}}>
+                    <option value="cashier">Cashier</option>
+                    <option value="manager">Manager</option>
+                  </select>
+                  <select value={newUserBranch} onChange={e => setNewUserBranch(e.target.value)} style={{background:'var(--bg-2)',color:'var(--text)',border:'1px solid var(--line)',borderRadius:10,padding:'10px',fontFamily:'inherit'}}>
+                    <option value="">All branches</option>
+                    {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
+                  </select>
+                </div>
+                <button className="blitz-admin-btn small" type="submit">👤 Create {newUserRole === 'cashier' ? 'Cashier' : 'Manager'} Login</button>
+              </form>
+              {users.length === 0 ? <p className="blitz-admin-empty">No staff logins yet.</p> : (
+                <div className="blitz-admin-list">
+                  {users.map(u => {
+                    const branchName = branches.find(b => b._id === u.branchId)?.name;
+                    return (
+                      <div className="exp-row" key={u._id}>
+                        <div>
+                          <b>{u.name || u.username}</b>
+                          <span className="blitz-admin-muted"> · @{u.username} · {u.role}{branchName ? ' · ' + branchName : ''} · Created {new Date(u.createdAt).toLocaleDateString()}</span>
+                        </div>
+                        <button className="pos-void" onClick={() => delUser(u._id)}>delete</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

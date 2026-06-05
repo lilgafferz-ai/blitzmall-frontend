@@ -231,7 +231,7 @@ function Admin() {
   if (!loggedIn) return (
     <div className="ad-login"><div className="ad-login-card"><div className="ad-logo">⚡</div>
       <h1>Blitz Mall <span>Owner</span></h1><p className="ad-muted">Manage your store</p>
-      <form onSubmit={login}><input className="ad-field" type="password" placeholder="Owner password" value={pw} onChange={e => setPw(e.target.value)} required /><button className="ad-btn" type="submit">Enter HQ</button></form>
+      <form onSubmit={login}><input className="owner-field" type="password" placeholder="Owner password" value={pw} onChange={e => setPw(e.target.value)} required /><button className="ad-btn" type="submit">Enter HQ</button></form>
     </div></div>
   );
 

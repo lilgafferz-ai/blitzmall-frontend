@@ -18,8 +18,8 @@
 .ad-login-card h1 span { font-weight:400; background:var(--grad); -webkit-background-clip:text; background-clip:text; color:transparent; }
 .ad-muted { color:var(--muted); font-size:.9rem; }
 .ad-login-card form { display:flex; flex-direction:column; gap:12px; margin-top:22px; }
-.ad-field { background:var(--bg-2); border:1px solid var(--line); border-radius:12px; padding:14px 16px; color:var(--text); font-size:1rem; font-family:inherit; }
-.ad-field:focus { outline:none; border-color:var(--orange); }
+.owner-field { background:var(--bg-2); border:1px solid var(--line); border-radius:12px; padding:14px 16px; color:var(--text); font-size:1rem; font-family:inherit; }
+.owner-field:focus { outline:none; border-color:var(--orange); }
 .ad-btn { background:var(--grad); color:#1a0a00; border:none; border-radius:12px; padding:14px; font-weight:700; font-family:inherit; font-size:1rem; cursor:pointer; box-shadow:var(--glow); transition:transform .15s; }
 .ad-btn:hover { transform:translateY(-2px); }
 .ad-btn:disabled { opacity:.4; cursor:not-allowed; box-shadow:none; transform:none; }

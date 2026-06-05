@@ -229,9 +229,9 @@ function Admin() {
   const exportBackup = async () => { try { const r = await fetch(API_URL + '/admin/export'); const data = await r.json(); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'blitz-backup-' + new Date().toISOString().slice(0,10) + '.json'; a.click(); URL.revokeObjectURL(url); } catch (e) { alert('Export failed'); } };
 
   if (!loggedIn) return (
-    <div className="adm-login"><div className="adm-login-card"><div className="adm-logo">⚡</div>
-      <h1>Blitz Mall <span>Owner</span></h1><p className="adm-muted">Manage your store</p>
-      <form onSubmit={login}><input className="owner-field" type="password" placeholder="Owner password" value={pw} onChange={e => setPw(e.target.value)} required /><button className="adm-btn" type="submit">Enter HQ</button></form>
+    <div className="blitz-login"><div className="blitz-login-card"><div className="blitz-logo">⚡</div>
+      <h1>Blitz Mall <span>Owner</span></h1><p className="blitz-muted">Manage your store</p>
+      <form onSubmit={login}><input className="owner-field" type="password" placeholder="Owner password" value={pw} onChange={e => setPw(e.target.value)} required /><button className="blitz-btn" type="submit">Enter HQ</button></form>
     </div></div>
   );
 
@@ -243,19 +243,19 @@ function Admin() {
 
   return (
     <div className="ad">
-      <header className="adm-header">
-        <div className="adm-brand"><span className="adm-logo sm">⚡</span> Blitz Mall <b>HQ</b></div>
-        <div className="adm-head-right">
-          <button className={"adm-bell" + (alerts.out.length ? " ring" : "")} onClick={() => setMuted(m => !m)}>
-            {muted ? "🔕" : "🔔"}{totalAlerts > 0 && <i className="adm-bell-dot">{totalAlerts}</i>}
+      <header className="blitz-header">
+        <div className="blitz-brand"><span className="blitz-logo sm">⚡</span> Blitz Mall <b>HQ</b></div>
+        <div className="blitz-head-right">
+          <button className={"blitz-bell" + (alerts.out.length ? " ring" : "")} onClick={() => setMuted(m => !m)}>
+            {muted ? "🔕" : "🔔"}{totalAlerts > 0 && <i className="blitz-bell-dot">{totalAlerts}</i>}
           </button>
-          <button className="adm-exit" onClick={() => setLoggedIn(false)}>Exit</button>
+          <button className="blitz-exit" onClick={() => setLoggedIn(false)}>Exit</button>
         </div>
       </header>
 
       {showBanner && totalAlerts > 0 && (
-        <div className={"adm-alert-banner" + (alerts.out.length || (alerts.expired||[]).length ? " urgent" : "")}>
-          <span className="adm-alert-text">
+        <div className={"blitz-alert-banner" + (alerts.out.length || (alerts.expired||[]).length ? " urgent" : "")}>
+          <span className="blitz-alert-text">
             {alerts.out.length > 0 && <b>🚨 Out of stock: {alerts.out.map(p => p.name).join(", ")}. </b>}
             {(alerts.expired||[]).length > 0 && <b>❌ Expired: {alerts.expired.map(p => p.name).join(", ")}. </b>}
             {(alerts.expiringSoon||[]).length > 0 && <span>⏰ Expiring soon: {alerts.expiringSoon.map(p => p.name).join(", ")}. </span>}
@@ -265,7 +265,7 @@ function Admin() {
         </div>
       )}
 
-      <div className="adm-tabs">
+      <div className="blitz-tabs">
         <button className={tab==="sales"?"on":""} onClick={() => setTab("sales")}>🧾 Sell</button>
         <button className={tab==="inventory"?"on":""} onClick={() => setTab("inventory")}>📦 Inventory ({products.length})</button>
         <button className={tab==="orders"?"on":""} onClick={() => setTab("orders")}>🛒 Orders ({orders.length})</button>
@@ -277,7 +277,7 @@ function Admin() {
       </div>
 
       {tab === "sales" && (
-        <div className="adm-body pos-wrap">
+        <div className="blitz-body pos-wrap">
           <div className="pos-left">
             <div className="pos-head-row">
               <h2>Sell</h2>
@@ -292,7 +292,7 @@ function Admin() {
             <form className="pos-scan" onSubmit={handleScanSubmit}>
               <span>📷</span>
               <input ref={scanRef} autoFocus value={scan} onChange={e => setScan(e.target.value)} placeholder="Scan barcode or type product name…" />
-              <button className="adm-btn small" type="submit">Find</button>
+              <button className="blitz-btn small" type="submit">Find</button>
             </form>
             {scanMatches.length > 0 && (
               <div className="pos-suggest">
@@ -306,7 +306,7 @@ function Admin() {
             )}
             {lastChange && <div className="pos-change-banner">✅ Sale done · Total {money(lastChange.total)}{lastChange.change > 0 && <b> · Give change: {money(lastChange.change)}</b>}</div>}
             <div className="pos-cart">
-              {saleCart.length === 0 ? <p className="adm-empty">Scan or search to add items.</p> : saleCart.map(i => {
+              {saleCart.length === 0 ? <p className="blitz-empty">Scan or search to add items.</p> : saleCart.map(i => {
                 const left = stockOf(i.productId); const warn = left !== null && i.qty >= left;
                 return (
                   <div className="pos-cart-row" key={i.productId}>
@@ -315,7 +315,7 @@ function Admin() {
                       <span className="pos-line">{money(i.price)} × {i.qty} = <b>{money(i.price * i.qty)}</b></span>
                       {warn && <span className="pos-warn">⚠ only {left} in stock</span>}
                     </div>
-                    <div className="adm-qty"><button onClick={() => setSaleQty(i.productId, i.qty-1)}>−</button><b>{i.qty}</b><button onClick={() => setSaleQty(i.productId, i.qty+1)}>+</button></div>
+                    <div className="blitz-qty"><button onClick={() => setSaleQty(i.productId, i.qty-1)}>−</button><b>{i.qty}</b><button onClick={() => setSaleQty(i.productId, i.qty+1)}>+</button></div>
                     <button className="pos-x" onClick={() => setSaleQty(i.productId, 0)}>✕</button>
                   </div>
                 );
@@ -339,9 +339,9 @@ function Admin() {
                 {receipt.change > 0 && <div className="receipt-change"><span>Change</span><b>{money(receipt.change)}</b></div>}
                 <div className="receipt-pay">{receipt.paymentMethod}</div>
                 <div className="receipt-actions">
-                  <button className="adm-btn small" onClick={() => window.print()}>🖨 Print</button>
+                  <button className="blitz-btn small" onClick={() => window.print()}>🖨 Print</button>
                   {receiptWALink && <a className="cr-remind" href={receiptWALink} target="_blank" rel="noreferrer">📱 WhatsApp</a>}
-                  <button className="adm-btn small" onClick={() => setReceipt(null)}>New sale</button>
+                  <button className="blitz-btn small" onClick={() => setReceipt(null)}>New sale</button>
                 </div>
               </div>
             ) : (
@@ -365,14 +365,14 @@ function Admin() {
                 )}
                 {payMethod === "split" && <div className="pos-cash"><label>Cash part<input type="number" value={cashPart} onChange={e => setCashPart(e.target.value)} placeholder="KES" /></label><label>M-Pesa part<input type="number" value={mpesaPart} onChange={e => setMpesaPart(e.target.value)} placeholder="KES" /></label><div className="pos-change show">Covered: {money(splitCovered)} / {money(saleTotal)}</div></div>}
                 {payMethod === "airtel" && <div className="pos-cash"><p style={{color:"var(--muted)",fontSize:".85rem"}}>Customer sends Airtel Money manually to your number. Confirm after you see it on your phone.</p></div>}
-                <button className="adm-btn pos-complete" disabled={!saleCart.length} onClick={completeSale}>Complete sale</button>
+                <button className="blitz-btn pos-complete" disabled={!saleCart.length} onClick={completeSale}>Complete sale</button>
               </>
             )}
             <div className="pos-recent">
               <h3>Recent sales</h3>
-              {recentSales.length === 0 ? <p className="adm-empty sm">No sales yet.</p> : recentSales.map(s => (
+              {recentSales.length === 0 ? <p className="blitz-empty sm">No sales yet.</p> : recentSales.map(s => (
                 <div className="pos-recent-row" key={s._id}>
-                  <div><b>{money(s.total)}</b><span className="adm-muted"> · {s.paymentMethod} · {s.staff||""} · {new Date(s.createdAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span></div>
+                  <div><b>{money(s.total)}</b><span className="blitz-muted"> · {s.paymentMethod} · {s.staff||""} · {new Date(s.createdAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span></div>
                   <button className="pos-void" onClick={() => voidSale(s._id)}>void</button>
                 </div>
               ))}
@@ -382,12 +382,12 @@ function Admin() {
       )}
 
       {tab === "inventory" && (
-        <div className="adm-body">
-          <div className="adm-row-between"><h2>Inventory</h2><button className="adm-btn small" onClick={() => { showForm ? resetForm() : setShowForm(true); }}>{showForm ? "✕ Cancel" : "➕ Add stock"}</button></div>
+        <div className="blitz-body">
+          <div className="blitz-row-between"><h2>Inventory</h2><button className="blitz-btn small" onClick={() => { showForm ? resetForm() : setShowForm(true); }}>{showForm ? "✕ Cancel" : "➕ Add stock"}</button></div>
           {showForm && (
-            <form className="adm-form" onSubmit={submitProduct}>
+            <form className="blitz-form" onSubmit={submitProduct}>
               <h3>{editingId ? "Edit item" : "Add new stock"}</h3>
-              <div className="adm-grid">
+              <div className="blitz-grid">
                 <label>Product name *<input value={form.name} onChange={e => setForm(s=>({...s,name:e.target.value}))} placeholder="e.g. Cooking Oil 1L" required /></label>
                 <label>Category<input value={form.category} onChange={e => setForm(s=>({...s,category:e.target.value}))} placeholder="e.g. Cooking, Drinks" list="cats" /><datalist id="cats">{[...new Set(products.map(p=>p.category).filter(Boolean))].map(c=><option key={c} value={c}/>)}</datalist></label>
                 <label>Barcode<input value={form.barcode} onChange={e => setForm(s=>({...s,barcode:e.target.value}))} placeholder="Scan or type" /></label>
@@ -396,26 +396,26 @@ function Admin() {
                 <label>Selling price (KES) *<input type="number" step="0.01" value={form.price} onChange={e => setForm(s=>({...s,price:e.target.value}))} placeholder="What customer pays" required /></label>
                 <label>Expiry date (if any)<input type="date" value={form.expiryDate} onChange={e => setForm(s=>({...s,expiryDate:e.target.value}))} /></label>
               </div>
-              {form.buyingPrice !== "" && form.price !== "" && <div className="adm-margin">Profit per item: <b>{money(parseFloat(form.price)-parseFloat(form.buyingPrice))}</b></div>}
-              <label className="adm-full">Description<textarea value={form.description} onChange={e => setForm(s=>({...s,description:e.target.value}))} placeholder="Optional notes for customers" /></label>
-              <label className="adm-full">Image<input type="file" accept="image/*" onChange={onImage} /></label>
-              {form.image && <div className="adm-preview"><img src={form.image} alt="preview" /></div>}
-              <button className="adm-btn" type="submit">{editingId ? "Save changes" : "Add to inventory"}</button>
+              {form.buyingPrice !== "" && form.price !== "" && <div className="blitz-margin">Profit per item: <b>{money(parseFloat(form.price)-parseFloat(form.buyingPrice))}</b></div>}
+              <label className="blitz-full">Description<textarea value={form.description} onChange={e => setForm(s=>({...s,description:e.target.value}))} placeholder="Optional notes for customers" /></label>
+              <label className="blitz-full">Image<input type="file" accept="image/*" onChange={onImage} /></label>
+              {form.image && <div className="blitz-preview"><img src={form.image} alt="preview" /></div>}
+              <button className="blitz-btn" type="submit">{editingId ? "Save changes" : "Add to inventory"}</button>
             </form>
           )}
-          <div className="adm-search"><span>🔍</span><input placeholder="Search name, barcode or category…" value={search} onChange={e => setSearch(e.target.value)} /></div>
-          {filtered.length === 0 ? <p className="adm-empty">No items yet.</p> : (
-            <div className="adm-list">{filtered.map(p => {
+          <div className="blitz-search"><span>🔍</span><input placeholder="Search name, barcode or category…" value={search} onChange={e => setSearch(e.target.value)} /></div>
+          {filtered.length === 0 ? <p className="blitz-empty">No items yet.</p> : (
+            <div className="blitz-list">{filtered.map(p => {
               const margin = (p.price||0)-(p.buyingPrice||0);
               return (
-                <div className="adm-item" key={p._id}>
-                  <div className="adm-thumb">{p.image ? <img src={p.image} alt={p.name}/> : "🛍️"}</div>
-                  <div className="adm-item-main">
-                    <div className="adm-item-top"><b>{p.name}</b>{stockTag(p.stock)}{expiryTag(p.expiryDate)}</div>
-                    <div className="adm-item-sub"><span className="adm-cat">{p.category||"Other"}</span>{p.barcode && <span className="adm-bc">#{p.barcode}</span>}</div>
-                    <div className="adm-item-prices"><span>Buy {money(p.buyingPrice||0)}</span><span>Sell {money(p.price||0)}</span><span className={margin>=0?"profit":"loss"}>Margin {money(margin)}</span></div>
+                <div className="blitz-item" key={p._id}>
+                  <div className="blitz-thumb">{p.image ? <img src={p.image} alt={p.name}/> : "🛍️"}</div>
+                  <div className="blitz-item-main">
+                    <div className="blitz-item-top"><b>{p.name}</b>{stockTag(p.stock)}{expiryTag(p.expiryDate)}</div>
+                    <div className="blitz-item-sub"><span className="blitz-cat">{p.category||"Other"}</span>{p.barcode && <span className="blitz-bc">#{p.barcode}</span>}</div>
+                    <div className="blitz-item-prices"><span>Buy {money(p.buyingPrice||0)}</span><span>Sell {money(p.price||0)}</span><span className={margin>=0?"profit":"loss"}>Margin {money(margin)}</span></div>
                   </div>
-                  <div className="adm-item-actions"><button onClick={() => editProduct(p)}>✏️</button><button onClick={() => delProduct(p._id)}>🗑️</button></div>
+                  <div className="blitz-item-actions"><button onClick={() => editProduct(p)}>✏️</button><button onClick={() => delProduct(p._id)}>🗑️</button></div>
                 </div>
               );
             })}</div>
@@ -424,13 +424,13 @@ function Admin() {
       )}
 
       {tab === "orders" && (
-        <div className="adm-body"><h2>Orders</h2>
-          {orders.length === 0 ? <p className="adm-empty">No orders yet</p> : (
-            <div className="adm-list">{orders.map(o => (
-              <div className="adm-order" key={o._id}>
-                <div className="adm-order-top"><b>{o.customerName}</b><span className="adm-phone">{o.customerId}</span></div>
-                <div className="adm-order-items">{o.items.map((it,k) => <p key={k}>{it.name} ×{it.quantity} — {money(it.price*it.quantity)}</p>)}</div>
-                <div className="adm-order-foot"><b>{money(o.totalPrice)}</b><span className="adm-muted">{new Date(o.createdAt).toLocaleString()}</span></div>
+        <div className="blitz-body"><h2>Orders</h2>
+          {orders.length === 0 ? <p className="blitz-empty">No orders yet</p> : (
+            <div className="blitz-list">{orders.map(o => (
+              <div className="blitz-order" key={o._id}>
+                <div className="blitz-order-top"><b>{o.customerName}</b><span className="blitz-phone">{o.customerId}</span></div>
+                <div className="blitz-order-items">{o.items.map((it,k) => <p key={k}>{it.name} ×{it.quantity} — {money(it.price*it.quantity)}</p>)}</div>
+                <div className="blitz-order-foot"><b>{money(o.totalPrice)}</b><span className="blitz-muted">{new Date(o.createdAt).toLocaleString()}</span></div>
                 <select value={o.status} onChange={e => setStatus(o._id, e.target.value)}>
                   <option value="pending">⏳ Pending</option><option value="packed">📦 Packed</option><option value="on_the_way">🚚 On the way</option><option value="delivered">✅ Delivered</option>
                 </select>
@@ -441,10 +441,10 @@ function Admin() {
       )}
 
       {tab === "records" && (
-        <div className="adm-body">
-          <div className="adm-row-between"><h2>Records</h2><div style={{display:"flex",gap:10}}><button className="adm-btn small" onClick={loadSummary}>↻ Refresh</button><button className="adm-btn small" onClick={exportBackup}>⬇ Backup</button></div></div>
+        <div className="blitz-body">
+          <div className="blitz-row-between"><h2>Records</h2><div style={{display:"flex",gap:10}}><button className="blitz-btn small" onClick={loadSummary}>↻ Refresh</button><button className="blitz-btn small" onClick={exportBackup}>⬇ Backup</button></div></div>
           <div className="rec-periods">{Object.keys(periodLabel).map(k => <button key={k} className={period===k?"on":""} onClick={() => setPeriod(k)}>{periodLabel[k]}</button>)}</div>
-          {!summary ? <p className="adm-empty">Loading…</p> : (
+          {!summary ? <p className="blitz-empty">Loading…</p> : (
             <>
               <div className="rec-cards">
                 <div className="rec-card"><span>Revenue</span><b>{money(P.revenue)}</b><small>{P.count} sales</small></div>
@@ -454,9 +454,9 @@ function Admin() {
               </div>
               <div className="rec-split"><h3>Cash vs M-Pesa</h3><div className="rec-bar"><div className="rec-bar-cash" style={{flex:P.cash||0.001}}/><div className="rec-bar-mpesa" style={{flex:P.mpesa||0.001}}/></div><div className="rec-split-legend"><span>💵 Cash {money(P.cash)}</span><span>📱 M-Pesa {money(P.mpesa)}</span></div></div>
               <div className="rec-two">
-                <div className="rec-panel"><h3>🔥 Best sellers</h3>{summary.best.length === 0 ? <p className="adm-empty sm">No sales yet.</p> : summary.best.map(b => <div className="rec-line" key={b.name}><span>{b.name}</span><b>{b.qty} sold</b></div>)}</div>
+                <div className="rec-panel"><h3>🔥 Best sellers</h3>{summary.best.length === 0 ? <p className="blitz-empty sm">No sales yet.</p> : summary.best.map(b => <div className="rec-line" key={b.name}><span>{b.name}</span><b>{b.qty} sold</b></div>)}</div>
                 <div className="rec-panel"><h3>⚠ Alerts</h3>
-                  {[...(summary.expired||[]),...summary.out,...(summary.expiringSoon||[]),...summary.low].length === 0 ? <p className="adm-empty sm">All good.</p> : (<>
+                  {[...(summary.expired||[]),...summary.out,...(summary.expiringSoon||[]),...summary.low].length === 0 ? <p className="blitz-empty sm">All good.</p> : (<>
                     {(summary.expired||[]).map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="red">Expired {fmt(p.expiryDate)}</b></div>)}
                     {summary.out.map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="red">Out of stock</b></div>)}
                     {(summary.expiringSoon||[]).map(p => <div className="rec-line" key={p.name}><span>{p.name}</span><b className="gold">Exp {fmt(p.expiryDate)}</b></div>)}
@@ -470,10 +470,10 @@ function Admin() {
       )}
 
       {tab === "expenses" && (
-        <div className="adm-body"><h2>Expenses</h2>
+        <div className="blitz-body"><h2>Expenses</h2>
           {summary && <div className="exp-summary">Today: <b className="red">{money(summary.summary.today.expenses)}</b> · This month: <b className="red">{money(summary.summary.month.expenses)}</b></div>}
-          <form className="exp-form" onSubmit={addExpense}><input value={expDesc} onChange={e => setExpDesc(e.target.value)} placeholder="What for? e.g. Transport, Rent" required /><input type="number" step="0.01" value={expAmount} onChange={e => setExpAmount(e.target.value)} placeholder="Amount KES" required /><button className="adm-btn small" type="submit">Add</button></form>
-          {expenses.length === 0 ? <p className="adm-empty">No expenses yet.</p> : <div className="adm-list">{expenses.map(x => <div className="exp-row" key={x._id}><div><b>{x.description}</b><span className="adm-muted"> · {new Date(x.createdAt).toLocaleDateString()}</span></div><div className="exp-right"><b className="red">{money(x.amount)}</b><button className="pos-void" onClick={() => delExpense(x._id)}>delete</button></div></div>)}</div>}
+          <form className="exp-form" onSubmit={addExpense}><input value={expDesc} onChange={e => setExpDesc(e.target.value)} placeholder="What for? e.g. Transport, Rent" required /><input type="number" step="0.01" value={expAmount} onChange={e => setExpAmount(e.target.value)} placeholder="Amount KES" required /><button className="blitz-btn small" type="submit">Add</button></form>
+          {expenses.length === 0 ? <p className="blitz-empty">No expenses yet.</p> : <div className="blitz-list">{expenses.map(x => <div className="exp-row" key={x._id}><div><b>{x.description}</b><span className="blitz-muted"> · {new Date(x.createdAt).toLocaleDateString()}</span></div><div className="exp-right"><b className="red">{money(x.amount)}</b><button className="pos-void" onClick={() => delExpense(x._id)}>delete</button></div></div>)}</div>}
         </div>
       )}
 
@@ -481,17 +481,17 @@ function Admin() {
         const unpaid = credit.filter(c => !c.paid); const paid = credit.filter(c => c.paid);
         const owed = unpaid.reduce((s,c) => s + (c.amount||0), 0);
         return (
-          <div className="adm-body">
-            <div className="adm-row-between"><h2>Credit (Madeni)</h2><div className="cr-owed">Outstanding: <b>{money(owed)}</b></div></div>
+          <div className="blitz-body">
+            <div className="blitz-row-between"><h2>Credit (Madeni)</h2><div className="cr-owed">Outstanding: <b>{money(owed)}</b></div></div>
             <form className="cr-form" onSubmit={addCredit}>
               <input value={crName} onChange={e => setCrName(e.target.value)} placeholder="Customer name" required />
               <input value={crPhone} onChange={e => setCrPhone(e.target.value)} placeholder="Phone (07…)" />
               <input type="number" step="0.01" value={crAmount} onChange={e => setCrAmount(e.target.value)} placeholder="Amount KES" required />
               <input value={crNote} onChange={e => setCrNote(e.target.value)} placeholder="For what? (optional)" />
-              <button className="adm-btn small" type="submit">Add debt</button>
+              <button className="blitz-btn small" type="submit">Add debt</button>
             </form>
-            {unpaid.length === 0 ? <p className="adm-empty">No one owes you. 🎉</p> : <div className="adm-list">{unpaid.map(c => <div className="cr-row" key={c._id}><div className="cr-info"><b>{c.customerName}</b>{c.note && <span className="adm-muted">{c.note}</span>}<span className="cr-date">since {new Date(c.createdAt).toLocaleDateString()}{c.phone ? " · " + c.phone : ""}</span></div><div className="cr-amt">{money(c.amount)}</div><div className="cr-actions">{c.phone && <a className="cr-remind" href={waLink(c.phone,"Hi " + c.customerName + ", friendly reminder you have a balance of " + money(c.amount) + " at Brilliant. Asante!")} target="_blank" rel="noreferrer">Remind</a>}<button className="cr-paid" onClick={() => payCredit(c._id)}>Mark paid</button><button className="pos-void" onClick={() => delCredit(c._id)}>delete</button></div></div>)}</div>}
-            {paid.length > 0 && <div className="cr-paidwrap"><button className="cr-toggle" onClick={() => setCrShowPaid(s=>!s)}>{crShowPaid?"Hide":"Show"} cleared ({paid.length})</button>{crShowPaid && <div className="adm-list">{paid.map(c => <div className="cr-row cleared" key={c._id}><div className="cr-info"><b>{c.customerName}</b><span className="cr-date">paid {c.paidAt ? new Date(c.paidAt).toLocaleDateString() : ""}</span></div><div className="cr-amt">{money(c.amount)}</div><div className="cr-actions"><button className="pos-void" onClick={() => delCredit(c._id)}>delete</button></div></div>)}</div>}</div>}
+            {unpaid.length === 0 ? <p className="blitz-empty">No one owes you. 🎉</p> : <div className="blitz-list">{unpaid.map(c => <div className="cr-row" key={c._id}><div className="cr-info"><b>{c.customerName}</b>{c.note && <span className="blitz-muted">{c.note}</span>}<span className="cr-date">since {new Date(c.createdAt).toLocaleDateString()}{c.phone ? " · " + c.phone : ""}</span></div><div className="cr-amt">{money(c.amount)}</div><div className="cr-actions">{c.phone && <a className="cr-remind" href={waLink(c.phone,"Hi " + c.customerName + ", friendly reminder you have a balance of " + money(c.amount) + " at Brilliant. Asante!")} target="_blank" rel="noreferrer">Remind</a>}<button className="cr-paid" onClick={() => payCredit(c._id)}>Mark paid</button><button className="pos-void" onClick={() => delCredit(c._id)}>delete</button></div></div>)}</div>}
+            {paid.length > 0 && <div className="cr-paidwrap"><button className="cr-toggle" onClick={() => setCrShowPaid(s=>!s)}>{crShowPaid?"Hide":"Show"} cleared ({paid.length})</button>{crShowPaid && <div className="blitz-list">{paid.map(c => <div className="cr-row cleared" key={c._id}><div className="cr-info"><b>{c.customerName}</b><span className="cr-date">paid {c.paidAt ? new Date(c.paidAt).toLocaleDateString() : ""}</span></div><div className="cr-amt">{money(c.amount)}</div><div className="cr-actions"><button className="pos-void" onClick={() => delCredit(c._id)}>delete</button></div></div>)}</div>}</div>}
           </div>
         );
       })()}
@@ -499,18 +499,18 @@ function Admin() {
       {tab === "reviews" && (() => {
         const count = reviews.length; const avg = count ? reviews.reduce((s,r) => s+(r.rating||0),0)/count : 0; const complaints = reviews.filter(r => r.rating<=2).length;
         return (
-          <div className="adm-body"><h2>Reviews</h2>
+          <div className="blitz-body"><h2>Reviews</h2>
             <div className="rv-head"><div className="rv-avg"><b>{avg.toFixed(1)}</b><span className="rv-stars">{stars(Math.round(avg))}</span><small>{count} review{count!==1?"s":""}</small></div>{complaints > 0 && <div className="rv-complaints">⚠ {complaints} complaint{complaints!==1?"s":""} (1–2 stars)</div>}</div>
-            {count === 0 ? <p className="adm-empty">No reviews yet.</p> : <div className="adm-list">{reviews.map(r => <div className={"rv-row" + (r.rating<=2?" bad":"")} key={r._id}><div className="rv-info"><div className="rv-top"><span className="rv-stars">{stars(r.rating)}</span><b>{r.customerName}</b></div>{r.message && <p className="rv-msg">{r.message}</p>}<span className="cr-date">{new Date(r.createdAt).toLocaleDateString()}</span></div><button className="pos-void" onClick={() => delReview(r._id)}>delete</button></div>)}</div>}
+            {count === 0 ? <p className="blitz-empty">No reviews yet.</p> : <div className="blitz-list">{reviews.map(r => <div className={"rv-row" + (r.rating<=2?" bad":"")} key={r._id}><div className="rv-info"><div className="rv-top"><span className="rv-stars">{stars(r.rating)}</span><b>{r.customerName}</b></div>{r.message && <p className="rv-msg">{r.message}</p>}<span className="cr-date">{new Date(r.createdAt).toLocaleDateString()}</span></div><button className="pos-void" onClick={() => delReview(r._id)}>delete</button></div>)}</div>}
           </div>
         );
       })()}
 
       {tab === "staff" && (
-        <div className="adm-body"><h2>Staff & Cashiers</h2>
-          <p className="adm-muted" style={{marginBottom:16}}>Add staff here. They appear in the cashier selector on the Sell tab so each sale is attributed correctly. Full secure staff logins come with the security/deployment phase.</p>
-          <form className="exp-form" onSubmit={addStaff}><input value={newStaffName} onChange={e => setNewStaffName(e.target.value)} placeholder="Staff name e.g. Jane" required /><button className="adm-btn small" type="submit">Add cashier</button></form>
-          {staffList.length === 0 ? <p className="adm-empty">No staff added yet.</p> : <div className="adm-list">{staffList.map(s => <div className="exp-row" key={s._id}><div><b>{s.name}</b><span className="adm-muted"> · {s.role||"Cashier"} · Added {new Date(s.createdAt).toLocaleDateString()}</span></div><button className="pos-void" onClick={() => delStaff(s._id)}>remove</button></div>)}</div>}
+        <div className="blitz-body"><h2>Staff & Cashiers</h2>
+          <p className="blitz-muted" style={{marginBottom:16}}>Add staff here. They appear in the cashier selector on the Sell tab so each sale is attributed correctly. Full secure staff logins come with the security/deployment phase.</p>
+          <form className="exp-form" onSubmit={addStaff}><input value={newStaffName} onChange={e => setNewStaffName(e.target.value)} placeholder="Staff name e.g. Jane" required /><button className="blitz-btn small" type="submit">Add cashier</button></form>
+          {staffList.length === 0 ? <p className="blitz-empty">No staff added yet.</p> : <div className="blitz-list">{staffList.map(s => <div className="exp-row" key={s._id}><div><b>{s.name}</b><span className="blitz-muted"> · {s.role||"Cashier"} · Added {new Date(s.createdAt).toLocaleDateString()}</span></div><button className="pos-void" onClick={() => delStaff(s._id)}>remove</button></div>)}</div>}
         </div>
       )}
     </div>

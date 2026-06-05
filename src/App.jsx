@@ -7,10 +7,10 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 // Built-in avatars (served from public/avatars/). Upload-your-own also supported.
 const AVATARS = [
-  { id: 'cat', src: '/avatars/cat.png' },
-  { id: 'eightball', src: '/avatars/eightball.png' },
-  { id: 'stickman', src: '/avatars/stickman.png' },
-  { id: 'glassicon', src: '/avatars/glassicon.png' },
+  { id: 'cat',       label: 'Cat',       src: 'data:image/png;base64,<PASTE_cat_b64_here>' },
+  { id: 'eightball', label: '8-Ball',    src: 'data:image/png;base64,<PASTE_eightball_b64_here>' },
+  { id: 'stickman',  label: 'Stickman',  src: 'data:image/png;base64,<PASTE_stickman_b64_here>' },
+  { id: 'glassicon', label: 'Glasses',   src: 'data:image/png;base64,<PASTE_glassicon_b64_here>' },
 ];
 
 function BlitzLogo({ size = 80 }) {

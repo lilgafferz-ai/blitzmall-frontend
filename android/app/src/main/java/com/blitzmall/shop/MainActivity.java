@@ -1,20 +1,16 @@
 package com.blitzmall.shop;
-
 import android.os.Bundle;
 import android.view.WindowManager;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
-
 public class MainActivity extends BridgeActivity {
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         enableImmersiveMode();
     }
-
     private void enableImmersiveMode() {
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         getWindow().setFlags(
@@ -34,7 +30,6 @@ public class MainActivity extends BridgeActivity {
             );
         }
     }
-
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);

@@ -55,6 +55,18 @@ function Admin() {
 
   useEffect(() => { mutedRef.current = muted; }, [muted]);
 
+  // Inject theme vars on <html> so admin UI stays visible even if WebView strips CSS classes
+  useEffect(() => {
+    if (!loggedIn) return;
+    const vars = {
+      '--bg': '#0a0a0c', '--card': '#16161b', '--bg-2': '#111114', '--line': '#26262e',
+      '--text': '#f4f4f6', '--muted': '#8a8a96', '--gold': '#ffd24a', '--orange': '#ff7a1a',
+      '--red': '#ff2d2d', '--green': '#36d399',
+    };
+    const root = document.documentElement;
+    Object.entries(vars).forEach(([k, v]) => root.style.setProperty(k, v));
+  }, [loggedIn]);
+
   const playAlarm = () => {
     if (mutedRef.current) return;
     try {
@@ -86,14 +98,15 @@ function Admin() {
     } catch (e) { console.error(e); }
   };
 
-  const loadProducts = async () => { try { const r = await fetch(API_URL + '/products'); setProducts(await r.json()); } catch (e) { console.error(e); } };
-  const loadOrders = async () => { try { const r = await fetch(API_URL + '/admin/orders'); setOrders(await r.json()); } catch (e) { console.error(e); } };
-  const loadSales = async () => { try { const r = await fetch(API_URL + '/admin/sales?limit=15'); setRecentSales(await r.json()); } catch (e) { console.error(e); } };
+  const asArray = (d) => (Array.isArray(d) ? d : []);
+  const loadProducts = async () => { try { const r = await fetch(API_URL + '/products'); setProducts(asArray(await r.json())); } catch (e) { console.error(e); setProducts([]); } };
+  const loadOrders = async () => { try { const r = await fetch(API_URL + '/admin/orders'); setOrders(asArray(await r.json())); } catch (e) { console.error(e); setOrders([]); } };
+  const loadSales = async () => { try { const r = await fetch(API_URL + '/admin/sales?limit=15'); setRecentSales(asArray(await r.json())); } catch (e) { console.error(e); setRecentSales([]); } };
   const loadSummary = async () => { try { const r = await fetch(API_URL + '/admin/summary'); setSummary(await r.json()); } catch (e) { console.error(e); } };
-  const loadExpenses = async () => { try { const r = await fetch(API_URL + '/admin/expenses'); setExpenses(await r.json()); } catch (e) { console.error(e); } };
-  const loadCredit = async () => { try { const r = await fetch(API_URL + '/admin/credit'); setCredit(await r.json()); } catch (e) { console.error(e); } };
-  const loadReviews = async () => { try { const r = await fetch(API_URL + '/admin/reviews'); setReviews(await r.json()); } catch (e) { console.error(e); } };
-  const loadStaff = async () => { try { const r = await fetch(API_URL + '/admin/staff'); setStaffList(await r.json()); } catch (e) { console.error(e); } };
+  const loadExpenses = async () => { try { const r = await fetch(API_URL + '/admin/expenses'); setExpenses(asArray(await r.json())); } catch (e) { console.error(e); setExpenses([]); } };
+  const loadCredit = async () => { try { const r = await fetch(API_URL + '/admin/credit'); setCredit(asArray(await r.json())); } catch (e) { console.error(e); setCredit([]); } };
+  const loadReviews = async () => { try { const r = await fetch(API_URL + '/admin/reviews'); setReviews(asArray(await r.json())); } catch (e) { console.error(e); setReviews([]); } };
+  const loadStaff = async () => { try { const r = await fetch(API_URL + '/admin/staff'); setStaffList(asArray(await r.json())); } catch (e) { console.error(e); setStaffList([]); } };
 
   useEffect(() => {
     if (!loggedIn) return;
@@ -235,14 +248,15 @@ function Admin() {
     </div></div>
   );
 
-  const filtered = products.filter(p => !search.trim() || p.name.toLowerCase().includes(search.toLowerCase()) || (p.barcode||'').includes(search) || (p.category||'').toLowerCase().includes(search.toLowerCase()));
+  const productList = Array.isArray(products) ? products : [];
+  const filtered = productList.filter(p => !search.trim() || p.name.toLowerCase().includes(search.toLowerCase()) || (p.barcode||'').includes(search) || (p.category||'').toLowerCase().includes(search.toLowerCase()));
   const P = summary ? summary.summary[period] : null;
   const periodLabel = { today: 'Today', week: 'This week', month: 'This month', year: 'This year', all: 'All time' };
   const totalAlerts = alerts.out.length + alerts.low.length + (alerts.expired||[]).length;
   const receiptWALink = receipt && receipt.phone ? waLink(receipt.phone, 'BLITZ MALL RECEIPT\n' + receipt.date.toLocaleString() + '\nCashier: ' + receipt.cashier + '\n' + receipt.items.map(i => i.name + ' x' + i.qty + ' = KES ' + (i.price*i.qty)).join('\n') + '\nTotal: KES ' + receipt.total + (receipt.change > 0 ? '\nChange: KES ' + receipt.change : '') + '\nPayment: ' + receipt.paymentMethod + '\nThank you for shopping at Brilliant!') : null;
 
   return (
-    <div className="blitz-admin-admin">
+    <div className="blitz-hq-shell" style={{ minHeight: '100vh', background: '#0a0a0c', color: '#f4f4f6' }}>
       <header className="blitz-admin-header">
         <div className="blitz-admin-brand"><span className="blitz-admin-logo sm">⚡</span> Blitz Mall <b>HQ</b></div>
         <div className="blitz-admin-head-right">
@@ -254,8 +268,8 @@ function Admin() {
       </header>
 
       {showBanner && totalAlerts > 0 && (
-        <div className={"blitz-admin-alert-banner" + (alerts.out.length || (alerts.expired||[]).length ? " urgent" : "")}>
-          <span className="blitz-admin-alert-text">
+        <div className={"blitz-hq-notice" + (alerts.out.length || (alerts.expired||[]).length ? " urgent" : "")}>
+          <span className="blitz-hq-notice-text">
             {alerts.out.length > 0 && <b>🚨 Out of stock: {alerts.out.map(p => p.name).join(", ")}. </b>}
             {(alerts.expired||[]).length > 0 && <b>❌ Expired: {alerts.expired.map(p => p.name).join(", ")}. </b>}
             {(alerts.expiringSoon||[]).length > 0 && <span>⏰ Expiring soon: {alerts.expiringSoon.map(p => p.name).join(", ")}. </span>}
@@ -304,7 +318,7 @@ function Admin() {
                 ))}
               </div>
             )}
-            {lastChange && <div className="pos-change-banner">✅ Sale done · Total {money(lastChange.total)}{lastChange.change > 0 && <b> · Give change: {money(lastChange.change)}</b>}</div>}
+            {lastChange && <div className="pos-change-notice">✅ Sale done · Total {money(lastChange.total)}{lastChange.change > 0 && <b> · Give change: {money(lastChange.change)}</b>}</div>}
             <div className="pos-cart">
               {saleCart.length === 0 ? <p className="blitz-admin-empty">Scan or search to add items.</p> : saleCart.map(i => {
                 const left = stockOf(i.productId); const warn = left !== null && i.qty >= left;

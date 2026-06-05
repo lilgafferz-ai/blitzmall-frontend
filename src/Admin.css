@@ -1,6 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Manrope:wght@400;500;600;700&display=swap");
 
-.blitz-admin-admin, .blitz-admin-login {
+.blitz-admin, .blitz-admin-login {
   --bg:#0a0a0c; --card:#16161b; --bg-2:#111114; --line:#26262e; --text:#f4f4f6; --muted:#8a8a96;
   --gold:#ffd24a; --orange:#ff7a1a; --red:#ff2d2d; --green:#36d399;
   --grad:linear-gradient(135deg,#ffd24a,#ff7a1a 50%,#ff2d2d);

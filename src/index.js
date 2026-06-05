@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
@@ -11,7 +11,8 @@ root.render(
   </React.StrictMode>
 );
 
-if ('serviceWorker' in navigator) {
+const isNativeApp = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
+if ('serviceWorker' in navigator && !isNativeApp) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
       .then(reg => console.log('SW registered'))

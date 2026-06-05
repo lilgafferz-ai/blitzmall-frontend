@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import './App.css';
 import Admin from './Admin';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+const API_URL = process.env.REACT_APP_API_URL || 'https://blitzmall-backend.onrender.com/api';
 
 // Built-in avatars (served from public/avatars/). Upload-your-own also supported.
 const AVATARS = [

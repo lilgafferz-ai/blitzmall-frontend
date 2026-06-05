@@ -7,7 +7,7 @@
   --glow:0 0 18px rgba(255,122,26,.55),0 0 40px rgba(255,45,45,.25);
 }
 *{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:'Manrope',sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;}
+body{font-family:'Manrope',sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);}
 .app-container{min-height:100vh;}
 
 /* SPLASH */

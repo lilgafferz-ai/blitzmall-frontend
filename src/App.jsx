@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import './App.css';
 import Admin from './Admin';
+import ErrorBoundary from './ErrorBoundary';
 
 const API_URL = process.env.REACT_APP_API_URL || 'https://blitzmall-backend.onrender.com/api';
 const PRODUCTS_CACHE_KEY = 'blitz_products_cache';
@@ -162,7 +163,9 @@ function App() {
   if (isAdmin) {
     return (
       <div className="app-container">
-        <Admin />
+        <ErrorBoundary>
+          <Admin />
+        </ErrorBoundary>
         <button className="back-to-shop-btn" onClick={() => setIsAdmin(false)}>← Back to Blitz Mall</button>
       </div>
     );

@@ -1,13 +1,15 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
-import Admin from './Admin';
 import ErrorBoundary from './ErrorBoundary';
+import { SplashScreen } from '@capacitor/splash-screen';
+const Admin = React.lazy(() => import('./Admin'));
 
 const API_URL = process.env.REACT_APP_API_URL || 'https://blitzmall-backend.onrender.com/api';
 const PRODUCTS_CACHE_KEY = 'blitz_products_cache';
 const ORDERS_CACHE_KEY = 'blitz_orders_cache';
 const OFFLINE_ORDERS_KEY = 'blitz_offline_orders';
+const CUSTOMER_KEY = 'blitz_customer';
 
 // Built-in avatars (served from public/avatars/). Upload-your-own also supported.
 const AVATARS = [
@@ -20,12 +22,28 @@ const AVATARS = [
 function BlitzLogo({ size = 80 }) {
   return (
     <svg className="blitz-logo" width={size} height={size} viewBox="0 0 100 100" fill="none">
-      <path d="M25 35 H75 L70 85 H30 Z" stroke="url(#bg1)" strokeWidth="3.5" fill="none" strokeLinejoin="round" />
-      <path d="M37 35 V28 a13 13 0 0 1 26 0 V35" stroke="url(#bg1)" strokeWidth="3.5" fill="none" strokeLinecap="round" />
-      <path d="M52 48 L44 62 H53 L46 76 L62 56 H52 L57 48 Z" fill="url(#bg1)" />
-      <defs><linearGradient id="bg1" x1="0" y1="0" x2="100" y2="100">
-        <stop offset="0%" stopColor="#ffd24a" /><stop offset="50%" stopColor="#ff7a1a" /><stop offset="100%" stopColor="#ff2d2d" />
-      </linearGradient></defs>
+      <defs>
+        <linearGradient id="bg1" x1="0" y1="0" x2="100" y2="100">
+          <stop offset="0%" stopColor="#ffd24a" />
+          <stop offset="50%" stopColor="#ff7a1a" />
+          <stop offset="100%" stopColor="#ff2d2d" />
+        </linearGradient>
+        <filter id="glow-react" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="3.2" result="blur" />
+          <feComponentTransfer in="blur" result="glow1">
+            <feFuncA type="linear" slope="0.75"/>
+          </feComponentTransfer>
+          <feMerge>
+            <feMergeNode in="glow1" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+      <g filter="url(#glow-react)">
+        <path d="M25 35 H75 L70 85 H30 Z" stroke="url(#bg1)" strokeWidth="4.5" fill="none" strokeLinejoin="round" />
+        <path d="M37 35 V28 a13 13 0 0 1 26 0 V35" stroke="url(#bg1)" strokeWidth="4.5" fill="none" strokeLinecap="round" />
+        <path d="M52 48 L44 62 H53 L46 76 L62 56 H52 L57 48 Z" fill="url(#bg1)" />
+      </g>
     </svg>
   );
 }
@@ -38,8 +56,25 @@ function Avatar({ profile, size = 40 }) {
 
 function App() {
   const [isAdmin, setIsAdmin] = useState(false);
-  const [screen, setScreen] = useState('splash');
-  const [customer, setCustomer] = useState(null);
+  const [screen, setScreen] = useState(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem(CUSTOMER_KEY));
+      return c && c.customerId ? 'welcome' : 'login';
+    } catch {
+      return 'login';
+    }
+  });
+  const [customer, setCustomer] = useState(() => {
+    try { const c = JSON.parse(localStorage.getItem(CUSTOMER_KEY)); return c && c.customerId ? c : null; } catch { return null; }
+  });
+  const [welcomeMsg, setWelcomeMsg] = useState(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem(CUSTOMER_KEY));
+      return c && c.customerId ? { name: c.name, returning: true } : null;
+    } catch {
+      return null;
+    }
+  });
   const [profile, setProfile] = useState(() => {
     try { return JSON.parse(localStorage.getItem('blitz_profile')) || null; } catch { return null; }
   });
@@ -114,11 +149,30 @@ function App() {
   useEffect(() => {
     loadProducts();
     window.addEventListener('online', loadProducts);
+    try { SplashScreen.hide(); } catch {}
     return () => window.removeEventListener('online', loadProducts);
   }, [loadProducts]);
 
   useEffect(() => {
-    if (screen === 'splash') { const t = setTimeout(() => setScreen('login'), 6000); return () => clearTimeout(t); }
+    if (screen === 'splash') {
+      const t = setTimeout(() => {
+        // Auto-login returning customers
+        if (customer && customer.customerId) {
+          setWelcomeMsg({ name: customer.name, returning: true });
+          setScreen('welcome');
+        } else {
+          setScreen('login');
+        }
+      }, 3000);
+      return () => clearTimeout(t);
+    }
+  }, [screen, customer]);
+
+  useEffect(() => {
+    if (screen === 'welcome') {
+      const t = setTimeout(() => setScreen('home'), 1500);
+      return () => clearTimeout(t);
+    }
   }, [screen]);
 
   useEffect(() => {
@@ -196,7 +250,17 @@ function App() {
     return (
       <div className="app-container">
         <ErrorBoundary>
-          <Admin />
+          <React.Suspense fallback={
+            <div className="splash welcome-splash">
+              <div className="splash-glow welcome-glow" />
+              <div className="splash-inner welcome-inner">
+                <p className="welcome-sub">Loading Admin Dashboard...</p>
+                <BlitzLogo size={60} />
+              </div>
+            </div>
+          }>
+            <Admin />
+          </React.Suspense>
         </ErrorBoundary>
         <button className="back-to-shop-btn" onClick={() => setIsAdmin(false)}>← Back to Blitz Mall</button>
       </div>
@@ -232,11 +296,24 @@ function App() {
       const r = await fetch(`${API_URL}/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, phone }) });
       const d = await r.json();
       if (d.success) {
-        setCustomer({ customerId: d.customerId, name });
+        const isReturning = !!d.returning;
+        const cust = { customerId: d.customerId, name, phone };
+        setCustomer(cust);
+        try { localStorage.setItem(CUSTOMER_KEY, JSON.stringify(cust)); } catch {}
         if (!profile) saveProfile({ name, phone, avatarId: 'cat', photo: null });
-        setName(''); setPhone(''); setScreen('home');
+        setName(''); setPhone('');
+        setWelcomeMsg({ name, returning: isReturning });
+        setScreen('welcome');
       }
     } catch (e) { console.error(e); }
+  };
+
+  const handleLogout = () => {
+    setCustomer(null);
+    setCart([]);
+    setMyOrders([]);
+    try { localStorage.removeItem(CUSTOMER_KEY); } catch {}
+    setScreen('login');
   };
 
   const handleCheckout = async () => {
@@ -294,12 +371,40 @@ function App() {
 
   // SPLASH
   if (screen === 'splash') return (
-    <div className="splash" onClick={() => setScreen('login')}>
+    <div className="splash" onClick={() => {
+      if (customer && customer.customerId) {
+        setWelcomeMsg({ name: customer.name, returning: true });
+        setScreen('welcome');
+      } else {
+        setScreen('login');
+      }
+    }}>
       <div className="splash-glow" />
       <div className="splash-inner"><BlitzLogo size={140} />
         <h1 className="splash-title">BLITZ<span>MALL</span></h1>
         <p className="splash-tag">Everything you need. Lightning fast.</p></div>
       <span className="splash-skip">tap to enter</span>
+    </div>
+  );
+
+  // WELCOME SPLASH (after login)
+  if (screen === 'welcome' && welcomeMsg) return (
+    <div className="splash welcome-splash" onClick={() => setScreen('home')}>
+      <div className="splash-glow welcome-glow" />
+      <div className="splash-inner welcome-inner">
+        <div className="welcome-emoji">{welcomeMsg.returning ? '👋' : '🎉'}</div>
+        <h1 className="welcome-title">
+          {welcomeMsg.returning ? 'Welcome back,' : 'Welcome,'}
+        </h1>
+        <h2 className="welcome-name">{welcomeMsg.name}!</h2>
+        <p className="welcome-sub">
+          {welcomeMsg.returning
+            ? 'Great to see you again ⚡'
+            : 'Your account is ready. Let\'s shop! 🛍️'}
+        </p>
+        <BlitzLogo size={60} />
+      </div>
+      <span className="splash-skip">tap to shop</span>
     </div>
   );
 
@@ -485,8 +590,9 @@ function App() {
         <h3 className="section-h">Account</h3>
         <button className="row-btn" onClick={() => { loadMyOrders(); setScreen('orders'); }}>📦 My orders<span>›</span></button>
         <button className="row-btn" onClick={() => setScreen('cart')}>🛒 My cart<span>›</span></button>
+        <button className="row-btn" onClick={() => setScreen('share')}>📲 Share / Download App<span>›</span></button>
         <button className="row-btn" onClick={() => { setReviewStars(0); setReviewMsg(''); setReviewSent(false); setScreen('review'); }}>⭐ Rate us / Feedback<span>›</span></button>
-        <button className="row-btn danger" onClick={() => { setCustomer(null); setScreen('login'); }}>↩️ Logout<span>›</span></button>
+        <button className="row-btn danger" onClick={handleLogout}>↩️ Logout<span>›</span></button>
       </div>
       <BottomNav />
     </div>
@@ -540,6 +646,54 @@ function App() {
       <BottomNav />
     </div>
   );
+
+  // SHARE / DOWNLOAD APP
+  if (screen === 'share') {
+    const apkUrl = 'https://blitzmall-frontend.vercel.app/blitzmall.apk';
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(apkUrl)}`;
+    
+    return (
+      <div className="screen with-nav">
+        <header className="topbar">
+          <button className="icon-btn back" onClick={() => setScreen('profile')}>‹</button>
+          <h2 className="topbar-title">Share App</h2>
+        </header>
+        <div className="scroll">
+          <div className="share-box">
+            <BlitzLogo size={50} />
+            <h3 style={{ marginTop: '12px', marginBottom: '4px', fontFamily: 'Unbounded, sans-serif', fontSize: '1.2rem' }}>Get BlitzMall App</h3>
+            <p className="muted" style={{ fontSize: '0.9rem' }}>Scan this QR code to download the Android APK directly onto your phone.</p>
+            
+            <div className="share-qr-container">
+              <img src={qrUrl} alt="App Download QR Code" />
+            </div>
+
+            <p className="muted" style={{ fontSize: '0.9rem', marginBottom: '8px' }}>Or download directly using this link:</p>
+            <div className="share-link-box" onClick={() => {
+              navigator.clipboard.writeText(apkUrl);
+              alert('Download link copied to clipboard!');
+            }}>
+              {apkUrl}
+            </div>
+            <small style={{ color: 'var(--muted)', fontSize: '0.75rem', display: 'block', marginTop: '-8px', marginBottom: '16px' }}>
+              (Tap link to copy to clipboard)
+            </small>
+
+            <div className="share-steps">
+              <h4>📋 Installation Instructions:</h4>
+              <ol>
+                <li>Scan the QR code or tap the link to download the <strong>blitzmall.apk</strong> file.</li>
+                <li>Open the downloaded file on your Android device.</li>
+                <li>If prompted, allow installation from "Unknown Sources" in your browser/settings.</li>
+                <li>Tap <strong>Install</strong> and follow the prompts to complete setup.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+        <BottomNav />
+      </div>
+    );
+  }
 
   return null;
 }

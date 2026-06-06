@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/rules-of-hooks */
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import Admin from './Admin';
 import ErrorBoundary from './ErrorBoundary';
@@ -160,6 +160,38 @@ function App() {
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [stkCheckoutId, stkStatus]);
 
+  const categoryOf = (p) => (p.category && p.category.trim()) ? p.category.trim() : 'Other';
+  const categories = ['All', ...[...new Set(products.map(categoryOf))].sort()];
+  const productId = (p) => p._id || p.id;
+  const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+  const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
+
+  const ORDERS_CACHE_KEY_ORDERS = ORDERS_CACHE_KEY + '_' + (customer?.customerId || 'anon');
+  const syncOfflineOrders = useCallback(async () => {
+    try {
+      const queued = JSON.parse(localStorage.getItem(OFFLINE_ORDERS_KEY) || '[]');
+      if (!queued.length) return;
+      const synced = [];
+      for (const order of queued) {
+        try {
+          const r = await fetch(API_URL + '/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customerId: order.customerId, customerName: order.customerName, items: order.items, paymentMethod: order.paymentMethod }) });
+          const d = await r.json();
+          if (!d.success) synced.push(order);
+        } catch { synced.push(order); }
+      }
+      localStorage.setItem(OFFLINE_ORDERS_KEY, JSON.stringify(synced));
+    } catch (e) { console.warn('Failed to sync offline orders:', e); }
+  }, [customer]);
+
+  useEffect(() => {
+    if (!customer?.customerId) return;
+    try {
+      const cached = JSON.parse(localStorage.getItem(ORDERS_CACHE_KEY + '_' + customer.customerId));
+      if (Array.isArray(cached) && cached.length) setMyOrders(cached);
+    } catch {}
+  }, [customer]);
+
   if (isAdmin) {
     return (
       <div className="app-container">
@@ -170,12 +202,6 @@ function App() {
       </div>
     );
   }
-
-  const categoryOf = (p) => (p.category && p.category.trim()) ? p.category.trim() : 'Other';
-  const categories = useMemo(() => ['All', ...[...new Set(products.map(categoryOf))].sort()], [products]);
-  const productId = (p) => p._id || p.id;
-  const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
-  const cartCount = cart.reduce((s, i) => s + i.quantity, 0);
 
   const catIcon = (c) => {
     c = c.toLowerCase();
@@ -229,25 +255,7 @@ function App() {
         setCart([]); setScreen('confirmation');
       } catch (err) { console.error('Failed to queue order:', err); }
     }
-  };;
-
-  const ORDERS_CACHE_KEY_ORDERS = ORDERS_CACHE_KEY + '_' + (customer?.customerId || 'anon');
-  const syncOfflineOrders = useCallback(async () => {
-    try {
-      const queued = JSON.parse(localStorage.getItem(OFFLINE_ORDERS_KEY) || '[]');
-      if (!queued.length) return;
-      const synced = [];
-      for (const order of queued) {
-        try {
-          const r = await fetch(API_URL + '/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customerId: order.customerId, customerName: order.customerName, items: order.items, paymentMethod: order.paymentMethod }) });
-          const d = await r.json();
-          if (!d.success) synced.push(order);
-        } catch { synced.push(order); }
-      }
-      localStorage.setItem(OFFLINE_ORDERS_KEY, JSON.stringify(synced));
-    } catch (e) { console.warn('Failed to sync offline orders:', e); }
-  }, [API_URL, customer]);;
+  };
 
   const loadMyOrders = async () => {
     try {
@@ -265,14 +273,6 @@ function App() {
       } catch {}
     }
   };
-
-  useEffect(() => {
-    if (!customer?.customerId) return;
-    try {
-      const cached = JSON.parse(localStorage.getItem(ORDERS_CACHE_KEY + '_' + customer.customerId));
-      if (Array.isArray(cached) && cached.length) setMyOrders(cached);
-    } catch {}
-  }, [customer]);
 
   const openProduct = (p) => { setActiveProduct(p); setDetailQty(1); setScreen('product'); };
   const onUpload = (e) => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();

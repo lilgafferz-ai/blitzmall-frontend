@@ -67,7 +67,7 @@
     },
     "win": {
       "target": "portable",
-      "icon": "build/logo512.png"
+      "icon": "build/app-icon.png"
     }
   }
 }

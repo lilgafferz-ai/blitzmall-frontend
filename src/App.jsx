@@ -331,7 +331,7 @@ function App() {
     let shown = products;
     if (activeCategory !== 'All') shown = shown.filter(p => categoryOf(p) === activeCategory);
     if (term) shown = shown.filter(p => p.name.toLowerCase().includes(term) || (p.description || '').toLowerCase().includes(term) || categoryOf(p).toLowerCase().includes(term));
-    const trending = useMemo(() => [...shown].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)), [shown]);
+    const trending = [...shown].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
     return (
       <div className="screen with-nav shop-scroll" onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>

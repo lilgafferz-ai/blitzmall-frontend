@@ -6,9 +6,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 
-const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '' || window.location.protocol === 'file:')
-  ? 'http://localhost:5000/api'
-  : 'https://blitzmall-backend.onrender.com/api';
+const API_URL = 'https://blitzmall-backend.onrender.com/api';
 const BLANK = { name: '', category: '', barcode: '', buyingPrice: '', price: '', stock: '', description: '', image: null, expiryDate: '' };
 
 // JWT auth helper — adds Bearer token to every admin fetch

@@ -6,7 +6,17 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 
-const API_URL = 'https://blitzmall-backend.onrender.com/api';
+const getDefaultApiUrl = () => {
+  try {
+    const saved = localStorage.getItem('blitz_api_url');
+    if (saved) return saved;
+  } catch (e) {}
+  
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '' || window.location.protocol === 'file:';
+  return isLocal ? 'http://localhost:5000/api' : 'https://blitzmall-backend.onrender.com/api';
+};
+
+const API_URL = getDefaultApiUrl();
 const BLANK = { name: '', category: '', barcode: '', buyingPrice: '', price: '', stock: '', description: '', image: null, expiryDate: '' };
 
 // JWT auth helper — adds Bearer token to every admin fetch
@@ -21,6 +31,23 @@ const fmt = (d) => d ? new Date(d).toLocaleDateString() : '';
 function Admin() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [user, setUser] = useState(null); // { name, role, username }
+  const [adminPerfMode, setAdminPerfMode] = useState(() => {
+    try {
+      return localStorage.getItem('blitz_perf_mode') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      if (adminPerfMode) {
+        document.body.classList.add('perf-mode');
+      } else {
+        document.body.classList.remove('perf-mode');
+      }
+    } catch (e) {}
+  }, [adminPerfMode]);
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -62,6 +89,7 @@ function Admin() {
   const [stkStatus, setStkStatus] = useState('idle'); // idle | waiting | confirmed | failed
   const [stkError, setStkError] = useState('');
   const [cameraScan, setCameraScan] = useState(false);
+  const cameraScanRef = useRef(false);
   const scanRef = useRef(null);
   const cameraRef = useRef(null);
   const barcodeLoopRef = useRef(null);
@@ -126,6 +154,48 @@ function Admin() {
 
   // Stock transfers states
   const [stockTransfers, setStockTransfers] = useState([]);
+
+  // Category management states
+  const [categories, setCategories] = useState([]);
+  const [showCategoriesModal, setShowCategoriesModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [categoryError, setCategoryError] = useState('');
+  // Admin AI Chat states
+  const [adminAiMessages, setAdminAiMessages] = useState([
+    { sender: 'bot', text: '🤖 Hi! I\'m your Blitz Mall AI Business Assistant. Ask me about sales, inventory, orders, profit, predictions, or anything about your store!' }
+  ]);
+  const [adminAiInput, setAdminAiInput] = useState('');
+  const [adminAiLoading, setAdminAiLoading] = useState(false);
+  const [showAdminAiBot, setShowAdminAiBot] = useState(false);
+  const adminAiMessagesEndRef = useRef(null);
+
+  useEffect(() => {
+    if (adminAiMessagesEndRef.current) {
+      adminAiMessagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [adminAiMessages, adminAiLoading]);
+
+  const adminAiQuickActions = [
+    { label: '📊 Sales today', text: 'How were sales today?' },
+    { label: '💰 Profit', text: "What's my profit this month?" },
+    { label: '📦 Out of stock', text: 'Any out of stock items?' },
+    { label: '🛒 Pending orders', text: 'Show pending orders' },
+    { label: '🏆 Best sellers', text: 'Best selling products' },
+    { label: '🔮 Predictions', text: 'Restock predictions' },
+  ];
+
+  const handleAdminAiQuickAction = async (text) => {
+    setAdminAiMessages(prev => [...prev, { sender: 'user', text }]);
+    setAdminAiLoading(true);
+    try {
+      const data = await (await authPost(API_URL + '/admin/ai/chat', { message: text })).json();
+      setAdminAiMessages(prev => [...prev, { sender: 'bot', text: data.response || 'Sorry, could not process that.' }]);
+    } catch (e) {
+      setAdminAiMessages(prev => [...prev, { sender: 'bot', text: '🤖 Sorry, I encountered an error.' }]);
+    } finally {
+      setAdminAiLoading(false);
+    }
+  };
   const [transferForm, setTransferForm] = useState({ fromBranchId: '', toBranchId: '', items: [] });
   const [transferSelectedProduct, setTransferSelectedProduct] = useState('');
   const [transferSelectedQty, setTransferSelectedQty] = useState('');
@@ -138,6 +208,14 @@ function Admin() {
   const mutedRef = useRef(false);
 
   useEffect(() => { mutedRef.current = muted; }, [muted]);
+
+  const filtered = React.useMemo(() => {
+    const list = Array.isArray(products) ? products : [];
+    const term = search.trim().toLowerCase();
+    return list.filter(p => !term || p.name.toLowerCase().includes(term) || (p.barcode||'').includes(search) || (p.category||'').toLowerCase().includes(term));
+  }, [products, search]);
+
+
 
   // Online/offline listeners
   useEffect(() => {
@@ -210,6 +288,17 @@ function Admin() {
       const cached = getCachedProducts();
       if (cached.length > 0) setProducts(cached);
       else setProducts([]);
+    }
+  };
+  const loadCategories = async () => {
+    try {
+      const r = await authGet(API_URL + '/admin/categories');
+      if (r.ok) {
+        const data = await r.json();
+        setCategories(asArray(data));
+      }
+    } catch (e) {
+      console.error('Failed to load categories', e);
     }
   };
   const loadOrders = async () => { try { const r = await authGet(withBranch(API_URL + '/admin/orders')); setOrders(asArray(await r.json())); } catch (e) { console.error(e); setOrders([]); } };
@@ -370,7 +459,26 @@ function Admin() {
     } catch (e) { console.error(e); }
   };
 
-  const loadStockTransfers = async () => {
+  const sendAdminAiMessage = async (e) => {
+    e.preventDefault();
+    const msg = adminAiInput.trim();
+    if (!msg) return;
+    setAdminAiMessages(prev => [...prev, { sender: 'user', text: msg }]);
+    setAdminAiInput('');
+    setAdminAiLoading(true);
+    try {
+      const r = await authPost(API_URL + '/admin/ai/chat', { message: msg });
+      const d = await r.json();
+      setAdminAiMessages(prev => [...prev, { sender: 'bot', text: d.response || 'Sorry, I could not process that.' }]);
+    } catch (e) {
+      console.error(e);
+      setAdminAiMessages(prev => [...prev, { sender: 'bot', text: '🤖 Sorry, I encountered an error. Please try again.' }]);
+    } finally {
+      setAdminAiLoading(false);
+    }
+  };
+
+const loadStockTransfers = async () => {
     try {
       const r = await authGet(API_URL + '/admin/transfers');
       setStockTransfers(asArray(await r.json()));
@@ -592,7 +700,7 @@ function Admin() {
     else if (tab === 'staff') { loadStaff(); if (user?.role === 'owner') { loadUsers(); loadBranches(); loadShiftsList(); loadAuditLogs(); } }
     else if (tab === 'loyalty') { loadLoyaltyMembers(); loadCoupons(); }
     else if (tab === 'branches' && (!user || user.role === 'owner')) loadBranches();
-    else if (tab === 'inventory') { loadProducts(); loadPricingRules(); loadStockTransfers(); }
+    else if (tab === 'inventory') { loadProducts(); loadCategories(); loadPricingRules(); loadStockTransfers(); }
   }, [tab, loggedIn]);
 
   // Reload data when branch filter changes
@@ -625,6 +733,86 @@ function Admin() {
     const timeout = setTimeout(() => { clearInterval(interval); if (stkStatus === 'waiting') { setStkStatus('failed'); setStkError('Timed out waiting for PIN. Try again.'); } }, 90000);
     return () => { clearInterval(interval); clearTimeout(timeout); };
   }, [stkCheckoutId, stkStatus]);
+
+  // Camera barcode scanning
+  const stopCamera = React.useCallback(() => {
+    setCameraScan(false);
+    cameraScanRef.current = false;
+    if (barcodeLoopRef.current) { clearTimeout(barcodeLoopRef.current); barcodeLoopRef.current = null; }
+    if (cameraRef.current) {
+      const stream = cameraRef.current.srcObject;
+      if (stream) { stream.getTracks().forEach(t => t.stop()); }
+      cameraRef.current.srcObject = null;
+    }
+  }, []);
+
+  const startCamera = React.useCallback(async () => {
+    try {
+      setCameraScan(true);
+      cameraScanRef.current = true;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 640, height: 480 } });
+      if (cameraRef.current) cameraRef.current.srcObject = stream;
+
+      // Wait for video to play, then start detection
+      const video = cameraRef.current;
+      if (!video) return;
+      video.onloadedmetadata = () => { video.play(); };
+
+      let detector = null;
+      if (window.BarcodeDetector) {
+        try {
+          const supported = await window.BarcodeDetector.getSupportedFormats();
+          const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_39', 'code_128', 'qr_code'];
+          const formats = wanted.filter(f => supported.includes(f));
+          if (formats.length > 0) {
+            detector = new window.BarcodeDetector({ formats });
+          }
+        } catch (err) {
+          console.error('Failed to initialize BarcodeDetector:', err);
+        }
+      }
+
+      const detect = async () => {
+        if (!cameraScanRef.current || !document.body.contains(video)) return;
+        if (detector) {
+          try {
+            const barcodes = await detector.detect(video);
+            if (barcodes.length > 0) {
+              const code = barcodes[0].rawValue;
+              stopCamera();
+              setScan(code);
+              // Try to find and add the product immediately
+              const byCode = products.find(p => p.barcode && p.barcode === code);
+              if (byCode) addToSale(byCode);
+              else { if (scanRef.current) scanRef.current.focus(); }
+              return;
+            }
+          } catch (e) { /* detection error, keep trying */ }
+        }
+        barcodeLoopRef.current = setTimeout(detect, 200);
+      };
+      barcodeLoopRef.current = setTimeout(detect, 200);
+    } catch (e) {
+      console.error('Camera error:', e);
+      setCameraScan(false);
+      cameraScanRef.current = false;
+      alert('Could not access camera. Check permissions.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, stopCamera]);
+
+  // Close camera if user navigates away from Sell tab or if component unmounts
+  useEffect(() => {
+    if (tab !== 'sales') {
+      stopCamera();
+    }
+  }, [tab, stopCamera]);
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, [stopCamera]);
 
   const completeSaleRecord = async () => {
     const saleData = { items: saleCart.length ? saleCart : window._pendingSaleCart, paymentMethod: payMethod, amountGiven, cashPart, mpesaPart, cashier, custPhone, branchId: activeBranchId || undefined };
@@ -762,55 +950,42 @@ function Admin() {
   const delProduct = async (id) => { if (!window.confirm('Delete this item?')) return; try { const r = await authDelete(API_URL + '/admin/products/' + id); if ((await r.json()).success) loadProducts(); } catch (e) { console.error(e); } };
   const updateOrder = async (id, payload) => { try { const r = await authPut(API_URL + '/admin/orders/' + id, payload); if ((await r.json()).success) loadOrders(); } catch (e) { console.error(e); } };
 
-  // Camera barcode scanning
-  const startCamera = async () => {
+  const handleAddCategory = async (e) => {
+    if (e) e.preventDefault();
+    if (!newCategoryName.trim()) return;
+    setCategoryError('');
     try {
-      setCameraScan(true);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 640, height: 480 } });
-      if (cameraRef.current) cameraRef.current.srcObject = stream;
-
-      // Wait for video to play, then start detection
-      const video = cameraRef.current;
-      if (!video) return;
-      video.onloadedmetadata = () => { video.play(); };
-
-      const detect = async () => {
-        if (!cameraScan || !document.body.contains(video)) return;
-        try {
-          if (window.BarcodeDetector) {
-            const detector = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_39', 'code_128', 'qr_code'] });
-            const barcodes = await detector.detect(video);
-            if (barcodes.length > 0) {
-              const code = barcodes[0].rawValue;
-              stopCamera();
-              setScan(code);
-              // Try to find and add the product immediately
-              const byCode = products.find(p => p.barcode && p.barcode === code);
-              if (byCode) addToSale(byCode);
-              else { scanRef.current?.focus(); }
-              return;
-            }
-          }
-        } catch (e) { /* detection error, keep trying */ }
-        barcodeLoopRef.current = requestAnimationFrame(detect);
-      };
-      barcodeLoopRef.current = requestAnimationFrame(detect);
-    } catch (e) {
-      console.error('Camera error:', e);
-      setCameraScan(false);
-      alert('Could not access camera. Check permissions.');
+      const r = await authPost(API_URL + '/admin/categories', { name: newCategoryName.trim() });
+      const d = await r.json();
+      if (r.ok && d.success) {
+        setNewCategoryName('');
+        loadCategories();
+      } else {
+        setCategoryError(d.error || 'Failed to add category');
+      }
+    } catch (err) {
+      console.error(err);
+      setCategoryError('Server error. Failed to add category.');
     }
   };
 
-  const stopCamera = () => {
-    setCameraScan(false);
-    if (barcodeLoopRef.current) { cancelAnimationFrame(barcodeLoopRef.current); barcodeLoopRef.current = null; }
-    if (cameraRef.current) {
-      const stream = cameraRef.current.srcObject;
-      if (stream) { stream.getTracks().forEach(t => t.stop()); }
-      cameraRef.current.srcObject = null;
+  const handleDeleteCategory = async (id, name) => {
+    if (!window.confirm(`Are you sure you want to delete the category "${name}"?`)) return;
+    try {
+      const r = await authDelete(API_URL + '/admin/categories/' + id);
+      const d = await r.json();
+      if (r.ok && d.success) {
+        loadCategories();
+      } else {
+        alert(d.error || 'Failed to delete category');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Server error. Failed to delete category.');
     }
   };
+
+
 
   const stockTag = (s) => { if (s === undefined || s === null) return null; if (s <= 0) return React.createElement('span', {className:'tag out'}, 'Out'); if (s < 2) return React.createElement('span', {className:'tag low'}, 'Low: ' + s); return React.createElement('span', {className:'tag ok'}, s + ' left'); };
   const expiryTag = (d) => {
@@ -825,7 +1000,10 @@ function Admin() {
   const stockOf = (id) => { const p = products.find(x => pid(x) === id); return p ? (p.stock ?? null) : null; };
   const addToSale = (p) => { const id = pid(p); setSaleCart(c => { const ex = c.find(i => i.productId === id); if (ex) return c.map(i => i.productId === id ? { ...i, qty: i.qty+1 } : i); return [...c, { productId: id, name: p.name, price: p.price||0, buyingPrice: p.buyingPrice||0, qty: 1 }]; }); setScan(''); setLastChange(null); if (scanRef.current) scanRef.current.focus(); };
   const handleScanSubmit = (e) => { e.preventDefault(); const t = scan.trim(); if (!t) return; const byCode = products.find(p => p.barcode && p.barcode === t); if (byCode) { addToSale(byCode); return; } const byName = products.filter(p => p.name.toLowerCase().includes(t.toLowerCase())); if (byName.length === 1) addToSale(byName[0]); };
-  const scanMatches = scan.trim() ? products.filter(p => p.name.toLowerCase().includes(scan.toLowerCase()) || (p.barcode||'').includes(scan)).slice(0,6) : [];
+  const scanMatches = React.useMemo(() => {
+    const term = scan.trim().toLowerCase();
+    return term ? products.filter(p => p.name.toLowerCase().includes(term) || (p.barcode||'').includes(scan)).slice(0,6) : [];
+  }, [products, scan]);
   const setSaleQty = (id, q) => { if (q <= 0) setSaleCart(c => c.filter(i => i.productId !== id)); else setSaleCart(c => c.map(i => i.productId === id ? { ...i, qty: q } : i)); };
   const saleTotal = saleCart.reduce((s, i) => s + i.price * i.qty, 0);
   const saleProfit = saleCart.reduce((s, i) => s + (i.price - i.buyingPrice) * i.qty, 0);
@@ -1002,6 +1180,32 @@ function Admin() {
           <input className="owner-field" type="text" placeholder="Username" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} required />
           <input className="owner-field" type="password" placeholder="Password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} required />
           {loginError && <p style={{color:'var(--red)',fontSize:'.85rem'}}>{loginError}</p>}
+          <div style={{ marginTop: '10px', marginBottom: '14px', textAlign: 'left' }}>
+            <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '4px', fontWeight: 600 }}>Server Connection:</label>
+            <select 
+              value={API_URL} 
+              onChange={e => {
+                try {
+                  localStorage.setItem('blitz_api_url', e.target.value);
+                  window.location.reload();
+                } catch (err) {}
+              }}
+              style={{
+                width: '100%', 
+                padding: '8px 10px', 
+                borderRadius: '8px', 
+                background: 'var(--bg-2)', 
+                border: '1px solid var(--line)', 
+                color: 'var(--text)',
+                fontSize: '0.8rem',
+                fontFamily: 'inherit',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="https://blitzmall-backend.onrender.com/api">Cloud (Live Online Database)</option>
+              <option value="http://localhost:5000/api">Local Server (Development)</option>
+            </select>
+          </div>
           <button className="blitz-admin-btn" type="submit">Sign In</button>
         </form>
       </div></div>
@@ -1030,8 +1234,6 @@ function Admin() {
   const isTabVisible = visibleTabs.some(t => t.id === tab);
   const safeTab = isTabVisible ? tab : (visibleTabs[0]?.id || 'sales');
 
-  const productList = Array.isArray(products) ? products : [];
-  const filtered = productList.filter(p => !search.trim() || p.name.toLowerCase().includes(search.toLowerCase()) || (p.barcode||'').includes(search) || (p.category||'').toLowerCase().includes(search.toLowerCase()));
   const P = summary?.summary?.[period] ?? { revenue:0, profit:0, expenses:0, net:0, cash:0, mpesa:0, count:0 };
   const periodLabel = { today: 'Today', week: 'This week', month: 'This month', year: 'This year', all: 'All time' };
   const totalAlerts = alerts.out.length + alerts.low.length + (alerts.expired||[]).length;
@@ -1060,6 +1262,31 @@ function Admin() {
             {muted ? "🔕" : "🔔"}{totalAlerts > 0 && <i className="blitz-admin-bell-dot">{totalAlerts}</i>}
           </button>
           {!isCashier && <span className="blitz-admin-muted" style={{fontSize:'.78rem'}}>{user?.name} · {user?.role}{user?.branchId ? ' · ' + (branches.find(b => b._id === user.branchId)?.name || 'Branch') : ''}</span>}
+          <button 
+            onClick={() => {
+              const newVal = !adminPerfMode;
+              setAdminPerfMode(newVal);
+              try { localStorage.setItem('blitz_perf_mode', String(newVal)); } catch (e) {}
+            }} 
+            style={{
+              background: adminPerfMode ? 'rgba(54, 211, 153, 0.12)' : 'var(--bg-2)',
+              border: '1px solid var(--line)',
+              color: adminPerfMode ? 'var(--green)' : 'var(--text)',
+              borderRadius: 8,
+              padding: '4px 10px',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              fontFamily: 'inherit',
+              transition: 'all 0.15s ease',
+              marginRight: '6px'
+            }}
+            title="Toggle Performance / Graphics Mode"
+          >
+            🏎️ {adminPerfMode ? 'Fast' : 'Rich'}
+          </button>
           <button className="blitz-admin-exit" onClick={() => { 
             localStorage.removeItem('bm_token'); localStorage.removeItem('bm_user'); 
             sessionStorage.removeItem('bm_token'); sessionStorage.removeItem('bm_user'); 
@@ -1091,13 +1318,47 @@ function Admin() {
           <div className="shift-lock-card" style={{background:'var(--card)',border:'1px solid var(--line)',padding:'40px',borderRadius:20,maxWidth:400,boxShadow:'0 10px 30px rgba(0,0,0,0.5)',margin:'0 auto'}}>
             <span style={{fontSize:'3.5rem'}}>🔒</span>
             <h2 style={{fontFamily:'Unbounded, sans-serif',margin:'15px 0 10px 0',color:'var(--gold)'}}>POS Register Locked</h2>
-            <p className="blitz-admin-muted" style={{fontSize:'.9rem',marginBottom:24}}>A cashier shift must be opened before you can scan products or record sales transactions.</p>
+            <p className="blitz-admin-muted" style={{fontSize:'.9rem',marginBottom:16}}>A cashier shift must be opened before you can scan products or record sales transactions.</p>
+            
+            <div style={{ marginBottom: '20px', textAlign: 'left' }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '4px', fontWeight: 600 }}>Database Connection:</label>
+              <select 
+                value={API_URL} 
+                onChange={e => {
+                  try {
+                    localStorage.setItem('blitz_api_url', e.target.value);
+                    window.location.reload();
+                  } catch (err) {}
+                }}
+                style={{
+                  width: '100%', 
+                  padding: '10px 12px', 
+                  borderRadius: '10px', 
+                  background: 'var(--bg-2)', 
+                  border: '1px solid var(--line)', 
+                  color: 'var(--text)',
+                  fontSize: '0.85rem',
+                  fontFamily: 'inherit',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="https://blitzmall-backend.onrender.com/api">Cloud (Live Online Database)</option>
+                <option value="http://localhost:5000/api">Local Server (Development)</option>
+              </select>
+            </div>
+
             <form onSubmit={handleOpenShiftSubmit} style={{display:'flex',flexDirection:'column',gap:12}}>
               <input 
-                type="number" 
+                type="text" 
+                inputMode="decimal"
                 placeholder="Enter starting cash balance (KES)" 
                 value={startingCashInput} 
-                onChange={e => setStartingCashInput(e.target.value)} 
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                    setStartingCashInput(val);
+                  }
+                }} 
                 required 
                 style={{textAlign:'center',padding:12,borderRadius:10,background:'var(--bg-2)',border:'1px solid var(--line)',color:'var(--text)',fontSize:'1rem',width:'100%',boxSizing:'border-box'}}
               />
@@ -1194,7 +1455,7 @@ function Admin() {
                   <button className={payMethod==="split"?"on":""} onClick={() => setPayMethod("split")}>🔀 Split</button>
                 <button className={payMethod==="airtel"?"on":""} onClick={() => setPayMethod("airtel")}>📲 Airtel</button>
                 </div>
-                {payMethod === "cash" && <div className="pos-cash"><label>Amount given<input type="number" value={amountGiven} onChange={e => setAmountGiven(e.target.value)} placeholder="e.g. 500" /></label><div className={"pos-change" + (change > 0 ? " show" : "")}>Change to give: <b>{money(change)}</b></div></div>}
+                {payMethod === "cash" && <div className="pos-cash"><label>Amount given<input type="text" inputMode="decimal" value={amountGiven} onChange={e => { const val = e.target.value; if (val === '' || /^\d*\.?\d*$/.test(val)) setAmountGiven(val); }} placeholder="e.g. 500" /></label><div className={"pos-change" + (change > 0 ? " show" : "")}>Change to give: <b>{money(change)}</b></div></div>}
                 {payMethod === "mpesa" && (
                   <div className="pos-cash">
                     <label>Customer phone *<input type="tel" value={custPhone} onChange={e => setCustPhone(e.target.value)} placeholder="07xx xxx xxx" /></label>
@@ -1203,7 +1464,7 @@ function Admin() {
                     {stkStatus === "failed" && <div className="stk-fail">❌ {stkError || "Payment failed. Try again."}<button onClick={() => { setStkStatus("idle"); setStkError(""); }} style={{marginLeft:8,cursor:"pointer",background:"none",border:"none",color:"var(--orange)"}}>Retry</button></div>}
                   </div>
                 )}
-                {payMethod === "split" && <div className="pos-cash"><label>Cash part<input type="number" value={cashPart} onChange={e => setCashPart(e.target.value)} placeholder="KES" /></label><label>M-Pesa part<input type="number" value={mpesaPart} onChange={e => setMpesaPart(e.target.value)} placeholder="KES" /></label><div className="pos-change show">Covered: {money(splitCovered)} / {money(saleTotal)}</div></div>}
+                {payMethod === "split" && <div className="pos-cash"><label>Cash part<input type="text" inputMode="decimal" value={cashPart} onChange={e => { const val = e.target.value; if (val === '' || /^\d*\.?\d*$/.test(val)) setCashPart(val); }} placeholder="KES" /></label><label>M-Pesa part<input type="text" inputMode="decimal" value={mpesaPart} onChange={e => { const val = e.target.value; if (val === '' || /^\d*\.?\d*$/.test(val)) setMpesaPart(val); }} placeholder="KES" /></label><div className="pos-change show">Covered: {money(splitCovered)} / {money(saleTotal)}</div></div>}
                 {payMethod === "airtel" && <div className="pos-cash"><p style={{color:"var(--muted)",fontSize:".85rem"}}>Customer sends Airtel Money manually to your number. Confirm after you see it on your phone.</p></div>}
                 <button className="blitz-admin-btn pos-complete" disabled={!saleCart.length} onClick={completeSale}>Complete sale</button>
               </>
@@ -1213,7 +1474,7 @@ function Admin() {
               {recentSales.length === 0 ? <p className="blitz-admin-empty sm">No sales yet.</p> : recentSales.map(s => (
                 <div className="pos-recent-row" key={s._id}>
                   <div><b>{money(s.total)}</b><span className="blitz-admin-muted"> · {s.paymentMethod} · {s.staff||""} · {new Date(s.createdAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span></div>
-                  <button className="pos-void" onClick={() => voidSale(s._id)}>void</button>
+                  {!isCashier && <button className="pos-void" onClick={() => voidSale(s._id)}>void</button>}
                 </div>
               ))}
             </div>
@@ -1229,10 +1490,16 @@ function Admin() {
             <p className="blitz-admin-muted" style={{fontSize:'.85rem',marginBottom:20}}>Count the cash in your drawer and enter the total balance below to reconcile sales.</p>
             <form onSubmit={handleCloseShiftSubmit} style={{display:'flex',flexDirection:'column',gap:12}}>
               <input 
-                type="number" 
+                type="text" 
+                inputMode="decimal"
                 placeholder="Enter actual closing cash balance (KES)" 
                 value={closingCashInput} 
-                onChange={e => setClosingCashInput(e.target.value)} 
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                    setClosingCashInput(val);
+                  }
+                }} 
                 required 
                 style={{textAlign:'center',padding:12,borderRadius:10,background:'var(--bg-2)',border:'1px solid var(--line)',color:'var(--text)',fontSize:'1rem',width:'100%',boxSizing:'border-box'}}
               />
@@ -1273,13 +1540,37 @@ function Admin() {
 
       {safeTab === "inventory" && (
         <div className="blitz-admin-body">
-          <div className="blitz-admin-row-between"><h2>Inventory</h2><div style={{display:"flex",gap:6,flexWrap:"wrap"}}><button className="blitz-admin-btn small" onClick={exportInventoryExcel}>📊 Excel</button><button className="blitz-admin-btn small" onClick={() => { showForm ? resetForm() : setShowForm(true); }}>{showForm ? "✕ Cancel" : "➕ Add stock"}</button></div></div>
+          <div className="blitz-admin-row-between"><h2>Inventory</h2><div style={{display:"flex",gap:6,flexWrap:"wrap"}}><button className="blitz-admin-btn small" onClick={exportInventoryExcel}>📊 Excel</button><button className="blitz-admin-btn small" onClick={() => setShowCategoriesModal(true)}>📂 Manage Categories</button><button className="blitz-admin-btn small" onClick={() => { showForm ? resetForm() : setShowForm(true); }}>{showForm ? "✕ Cancel" : "➕ Add stock"}</button></div></div>
           {showForm && (
             <form className="blitz-admin-form" onSubmit={submitProduct}>
               <h3>{editingId ? "Edit item" : "Add new stock"}</h3>
               <div className="blitz-admin-grid">
                 <label>Product name *<input value={form.name} onChange={e => setForm(s=>({...s,name:e.target.value}))} placeholder="e.g. Cooking Oil 1L" required /></label>
-                <label>Category<input value={form.category} onChange={e => setForm(s=>({...s,category:e.target.value}))} placeholder="e.g. Cooking, Drinks" list="cats" /><datalist id="cats">{[...new Set(products.map(p=>p.category).filter(Boolean))].map(c=><option key={c} value={c}/>)}</datalist></label>
+                <label>Category *
+                  <select 
+                    value={form.category} 
+                    onChange={e => setForm(s=>({...s,category:e.target.value}))} 
+                    required 
+                    style={{
+                      background: 'var(--bg-2)', 
+                      border: '1px solid var(--line)', 
+                      borderRadius: '10px', 
+                      padding: '12px 14px', 
+                      color: 'var(--text)', 
+                      fontSize: '1rem', 
+                      fontFamily: 'inherit',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="">Select a category...</option>
+                    {form.category && !categories.some(c => c.name === form.category) && (
+                      <option value={form.category}>{form.category} (Not in list)</option>
+                    )}
+                    {categories.map(c => (
+                      <option key={c._id || c.name} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </label>
                 <label>Barcode<input value={form.barcode} onChange={e => setForm(s=>({...s,barcode:e.target.value}))} placeholder="Scan or type" /></label>
                 <label>Qty in stock<input type="number" value={form.stock} onChange={e => setForm(s=>({...s,stock:e.target.value}))} placeholder="e.g. 50" /></label>
                 <label>Buying price (KES)<input type="number" step="0.01" value={form.buyingPrice} onChange={e => setForm(s=>({...s,buyingPrice:e.target.value}))} placeholder="What you paid" /></label>
@@ -2228,7 +2519,48 @@ function Admin() {
         </div>
       )}
 
-      {showFlashSaleModal && flashSaleProduct && (
+      <button onClick={() => setShowAdminAiBot(v => !v)} style={{position:'fixed',bottom:24,right:24,width:56,height:56,borderRadius:'50%',background:'var(--grad)',color:'#000',border:'none',fontSize:'1.5rem',cursor:'pointer',zIndex:2999,boxShadow:'0 4px 20px rgba(255,122,26,0.4)',display:'flex',alignItems:'center',justifyContent:'center',transition:'transform 0.2s'}} title="AI Business Assistant" onMouseEnter={e => e.target.style.transform='scale(1.1)'} onMouseLeave={e => e.target.style.transform='scale(1)'}>🤖</button>
+        {showAdminAiBot && (
+          <div style={{position:'fixed',bottom:90,right:16,width:360,maxWidth:'calc(100vw - 32px)',height:480,background:'var(--card)',border:'1px solid var(--line)',borderRadius:16,display:'flex',flexDirection:'column',zIndex:3000,boxShadow:'0 10px 40px rgba(0,0,0,0.6)',overflow:'hidden'}}>
+            <div style={{background:'var(--grad)',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',color:'#000',fontWeight:700}}>
+              <span style={{fontSize:'.9rem'}}>🤖 Business AI Assistant</span>
+              <button onClick={() => setShowAdminAiBot(false)} style={{background:'none',border:'none',color:'#000',fontSize:'1.1rem',cursor:'pointer',fontWeight:700}}>✕</button>
+            </div>
+            <div style={{flex:1,overflowY:'auto',padding:12,display:'flex',flexDirection:'column',gap:8}}>
+              {adminAiMessages.map((msg, i) => (
+                <div key={i} style={{display:'flex',justifyContent:msg.sender==='user'?'flex-end':'flex-start'}}>
+                  <div style={{maxWidth:'85%',padding:'8px 12px',borderRadius:msg.sender==='user'?'12px 12px 2px 12px':'12px 12px 12px 2px',background:msg.sender==='user'?'var(--grad)':'var(--bg-2)',color:msg.sender==='user'?'#000':'var(--text)',fontSize:'.82rem',lineHeight:1.4,whiteSpace:'pre-wrap',border:msg.sender==='user'?'none':'1px solid var(--line)'}}>
+                    {msg.text.split('\n').map((line, idx) => <p key={idx} style={{margin:'2px 0',whiteSpace:'pre-wrap'}}>{line}</p>)}
+                  </div>
+                </div>
+              ))}
+              {adminAiLoading && (
+                <div style={{display:'flex',justifyContent:'flex-start'}}>
+                  <div style={{padding:'8px 12px',borderRadius:'12px 12px 12px 2px',background:'var(--bg-2)',border:'1px solid var(--line)',fontSize:'.82rem',color:'var(--muted)'}}>
+                    Thinking...
+                  </div>
+                </div>
+              )}
+                        </div>
+              <div ref={adminAiMessagesEndRef} />
+            {/* Quick action buttons */}
+            {adminAiMessages.length === 1 && adminAiMessages[0].sender === 'bot' && !adminAiLoading && (
+              <div style={{padding:'4px 12px 2px',display:'flex',flexDirection:'column',gap:4}}>
+                <p style={{fontSize:'.7rem',color:'var(--muted)',margin:0,fontWeight:600,textTransform:'uppercase',letterSpacing:'.5px'}}>Quick actions</p>
+                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                  {adminAiQuickActions.map((a, i) => (
+                    <button key={i} onClick={() => handleAdminAiQuickAction(a.text)} style={{background:'var(--bg-2)',border:'1px solid var(--line)',color:'var(--text)',borderRadius:20,padding:'4px 10px',fontSize:'.75rem',fontWeight:600,cursor:'pointer',transition:'all .2s',fontFamily:'inherit'}}>{a.label}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <form onSubmit={sendAdminAiMessage} style={{display:'flex',gap:8,padding:10,borderTop:'1px solid var(--line)',background:'var(--bg-2)'}}>
+              <input value={adminAiInput} onChange={e => setAdminAiInput(e.target.value)} placeholder="Ask about sales, inventory, orders..." disabled={adminAiLoading} style={{flex:1,padding:'8px 10px',borderRadius:8,background:'var(--bg)',border:'1px solid var(--line)',color:'var(--text)',fontSize:'.82rem'}} />
+              <button type="submit" disabled={adminAiLoading || !adminAiInput.trim()} className="blitz-admin-btn small" style={{padding:'8px 14px',fontSize:'.82rem'}}>Send</button>
+            </form>
+          </div>
+        )}
+        {showFlashSaleModal && flashSaleProduct && (
         <div className="blitz-admin-modal-overlay" style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000,backdropFilter:'blur(5px)'}}>
           <div className="blitz-admin-modal-card" style={{background:'var(--card)',border:'1px solid var(--line)',padding:30,borderRadius:16,width:'100%',maxWidth:420}}>
             <h3 style={{fontFamily:'Unbounded, sans-serif',color:'var(--orange)',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>⚡ Configure Flash Sale</h3>
@@ -2268,6 +2600,54 @@ function Admin() {
                 <button className="blitz-admin-btn" type="button" onClick={() => setShowFlashSaleModal(false)} style={{padding:12,background:'none',border:'1px solid var(--line)',color:'var(--text)'}}>Cancel</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      
+      {showCategoriesModal && (
+        <div className="blitz-admin-modal-overlay" style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000,backdropFilter:'blur(5px)'}}>
+          <div className="blitz-admin-modal-card" style={{background:'var(--card)',border:'1px solid var(--line)',padding:30,borderRadius:16,width:'100%',maxWidth:450,display:'flex',flexDirection:'column',gap:16}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:'1px solid var(--line)',paddingBottom:10}}>
+              <h3 style={{fontFamily:'Unbounded, sans-serif',color:'var(--gold)',margin:0}}>📂 Manage Categories</h3>
+              <button type="button" onClick={() => setShowCategoriesModal(false)} style={{background:'none',border:'none',color:'var(--muted)',fontSize:'1.2rem',cursor:'pointer'}}>✕</button>
+            </div>
+            
+            <form onSubmit={handleAddCategory} style={{display:'flex',gap:10,margin:0,background:'none',border:'none',padding:0}}>
+              <input 
+                type="text" 
+                placeholder="New category name (e.g. Snacks)" 
+                value={newCategoryName} 
+                onChange={e => setNewCategoryName(e.target.value)} 
+                required 
+                style={{flex:1,padding:10,borderRadius:8,background:'var(--bg-2)',border:'1px solid var(--line)',color:'var(--text)',fontSize:'.9rem'}}
+              />
+              <button className="blitz-admin-btn small" type="submit" style={{margin:0,padding:'10px 16px'}}>Add</button>
+            </form>
+            {categoryError && <p style={{color:'var(--red)',fontSize:'.8rem',margin:0}}>{categoryError}</p>}
+            
+            <div style={{maxHeight:'250px',overflowY:'auto',display:'flex',flexDirection:'column',gap:8,marginTop:10,paddingRight:5}}>
+              {categories.length === 0 ? (
+                <p className="blitz-admin-empty sm" style={{margin:0,padding:'10px 0'}}>No categories yet.</p>
+              ) : (
+                categories.map(c => (
+                  <div key={c._id || c.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 12px',background:'var(--bg-2)',border:'1px solid var(--line)',borderRadius:8,fontSize:'.9rem'}}>
+                    <span>{c.name}</span>
+                    <button 
+                      type="button" 
+                      onClick={() => handleDeleteCategory(c._id, c.name)}
+                      style={{background:'none',border:'none',color:'var(--red)',cursor:'pointer',fontSize:'1rem',padding:2}}
+                      title="Delete category"
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            
+            <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}>
+              <button className="blitz-admin-btn small" type="button" onClick={() => setShowCategoriesModal(false)} style={{background:'none',border:'1px solid var(--line)',color:'var(--text)',width:'100%',margin:0,padding:'10px'}}>Close</button>
+            </div>
           </div>
         </div>
       )}

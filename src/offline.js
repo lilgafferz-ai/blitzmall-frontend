@@ -57,13 +57,8 @@ export const syncQueuedSales = async (authHeaders) => {
     const saved = localStorage.getItem('blitz_api_url');
     if (saved) {
       API_URL = saved;
-    } else {
-      const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '' || window.location.protocol === 'file:';
-      if (isLocal) API_URL = 'http://localhost:5000/api';
     }
   } catch (e) {
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '' || window.location.protocol === 'file:';
-    if (isLocal) API_URL = 'http://localhost:5000/api';
   }
 
   for (const sale of queue) {

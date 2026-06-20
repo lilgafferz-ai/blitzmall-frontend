@@ -1,5 +1,7 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
+const fs = require('fs');
 
 // Set the application name and App User Model ID for proper Windows taskbar grouping and branding
 app.name = "BlitzMall";
@@ -8,13 +10,17 @@ if (process.platform === 'win32') {
 }
 
 function createWindow() {
+  const iconPath = fs.existsSync(path.join(__dirname, 'build', 'app-icon.ico'))
+    ? path.join(__dirname, 'build', 'app-icon.ico')
+    : path.join(__dirname, 'public', 'app-icon.ico');
+
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 1024,
     minHeight: 720,
     title: "Blitz Mall HQ",
-    icon: path.join(__dirname, 'public', 'app-icon.ico'),
+    icon: iconPath,
     show: false,
     backgroundColor: '#0a0a0c',
     webPreferences: {
@@ -29,13 +35,28 @@ function createWindow() {
     win.show();
   });
 
-  win.loadFile(path.join(__dirname, 'build', 'index.html')).catch((err) => {
+  win.loadFile(path.join(__dirname, 'build', 'index.html')).then(() => { win.webContents.executeJavaScript('localStorage.getItem(\"blitz_api_url\")').then(v => require('fs').writeFileSync('C:/Users/red/Desktop/apiurl.txt', v || 'NULL')) }).catch((err) => {
     console.error("Failed to load index.html. Make sure the React app is built first.", err);
   });
 }
 
 app.whenReady().then(() => {
   createWindow();
+
+  autoUpdater.checkForUpdatesAndNotify();
+
+  autoUpdater.on('update-downloaded', (info) => {
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'Update Ready',
+      message: 'A new version of BlitzMall has been downloaded. Restart the app to apply the updates.',
+      buttons: ['Restart Now', 'Later']
+    }).then((result) => {
+      if (result.response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

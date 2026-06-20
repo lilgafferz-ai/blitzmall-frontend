@@ -1,0 +1,330 @@
+﻿diff --git a/src/Admin.jsx b/src/Admin.jsx
+index b8c99f8..db4b1d8 100644
+--- a/src/Admin.jsx
++++ b/src/Admin.jsx
+@@ -6,7 +6,17 @@ import jsPDF from 'jspdf';
+ import autoTable from 'jspdf-autotable';
+ import * as XLSX from 'xlsx';
+ 
+-const API_URL = 'https://blitzmall-backend.onrender.com/api';
++const getDefaultApiUrl = () => {
++  try {
++    const saved = localStorage.getItem('blitz_api_url');
++    if (saved) return saved;
++  } catch (e) {}
++  
++  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '' || window.location.protocol === 'file:';
++  return isLocal ? 'http://localhost:5000/api' : 'https://blitzmall-backend.onrender.com/api';
++};
++
++const API_URL = getDefaultApiUrl();
+ const BLANK = { name: '', category: '', barcode: '', buyingPrice: '', price: '', stock: '', description: '', image: null, expiryDate: '' };
+ 
+ // JWT auth helper ΓÇö adds Bearer token to every admin fetch
+@@ -21,6 +31,23 @@ const fmt = (d) => d ? new Date(d).toLocaleDateString() : '';
+ function Admin() {
+   const [loggedIn, setLoggedIn] = useState(false);
+   const [user, setUser] = useState(null); // { name, role, username }
++  const [adminPerfMode, setAdminPerfMode] = useState(() => {
++    try {
++      return localStorage.getItem('blitz_perf_mode') === 'true';
++    } catch (e) {
++      return false;
++    }
++  });
++
++  useEffect(() => {
++    try {
++      if (adminPerfMode) {
++        document.body.classList.add('perf-mode');
++      } else {
++        document.body.classList.remove('perf-mode');
++      }
++    } catch (e) {}
++  }, [adminPerfMode]);
+   const [loginUsername, setLoginUsername] = useState('');
+   const [loginPassword, setLoginPassword] = useState('');
+   const [loginError, setLoginError] = useState('');
+@@ -126,6 +153,42 @@ function Admin() {
+ 
+   // Stock transfers states
+   const [stockTransfers, setStockTransfers] = useState([]);
++  // Admin AI Chat states
++  const [adminAiMessages, setAdminAiMessages] = useState([
++    { sender: 'bot', text: '≡ƒñû Hi! I\'m your Blitz Mall AI Business Assistant. Ask me about sales, inventory, orders, profit, predictions, or anything about your store!' }
++  ]);
++  const [adminAiInput, setAdminAiInput] = useState('');
++  const [adminAiLoading, setAdminAiLoading] = useState(false);
++  const [showAdminAiBot, setShowAdminAiBot] = useState(false);
++  const adminAiMessagesEndRef = useRef(null);
++
++  useEffect(() => {
++    if (adminAiMessagesEndRef.current) {
++      adminAiMessagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
++    }
++  }, [adminAiMessages, adminAiLoading]);
++
++  const adminAiQuickActions = [
++    { label: '≡ƒôè Sales today', text: 'How were sales today?' },
++    { label: '≡ƒÆ░ Profit', text: "What's my profit this month?" },
++    { label: '≡ƒôª Out of stock', text: 'Any out of stock items?' },
++    { label: '≡ƒ¢Æ Pending orders', text: 'Show pending orders' },
++    { label: '≡ƒÅå Best sellers', text: 'Best selling products' },
++    { label: '≡ƒö« Predictions', text: 'Restock predictions' },
++  ];
++
++  const handleAdminAiQuickAction = async (text) => {
++    setAdminAiMessages(prev => [...prev, { sender: 'user', text }]);
++    setAdminAiLoading(true);
++    try {
++      const data = await (await authPost(API_URL + '/admin/ai/chat', { message: text })).json();
++      setAdminAiMessages(prev => [...prev, { sender: 'bot', text: data.response || 'Sorry, could not process that.' }]);
++    } catch (e) {
++      setAdminAiMessages(prev => [...prev, { sender: 'bot', text: '≡ƒñû Sorry, I encountered an error.' }]);
++    } finally {
++      setAdminAiLoading(false);
++    }
++  };
+   const [transferForm, setTransferForm] = useState({ fromBranchId: '', toBranchId: '', items: [] });
+   const [transferSelectedProduct, setTransferSelectedProduct] = useState('');
+   const [transferSelectedQty, setTransferSelectedQty] = useState('');
+@@ -370,7 +433,26 @@ function Admin() {
+     } catch (e) { console.error(e); }
+   };
+ 
+-  const loadStockTransfers = async () => {
++  const sendAdminAiMessage = async (e) => {
++    e.preventDefault();
++    const msg = adminAiInput.trim();
++    if (!msg) return;
++    setAdminAiMessages(prev => [...prev, { sender: 'user', text: msg }]);
++    setAdminAiInput('');
++    setAdminAiLoading(true);
++    try {
++      const r = await authPost(API_URL + '/admin/ai/chat', { message: msg });
++      const d = await r.json();
++      setAdminAiMessages(prev => [...prev, { sender: 'bot', text: d.response || 'Sorry, I could not process that.' }]);
++    } catch (e) {
++      console.error(e);
++      setAdminAiMessages(prev => [...prev, { sender: 'bot', text: '≡ƒñû Sorry, I encountered an error. Please try again.' }]);
++    } finally {
++      setAdminAiLoading(false);
++    }
++  };
++
++const loadStockTransfers = async () => {
+     try {
+       const r = await authGet(API_URL + '/admin/transfers');
+       setStockTransfers(asArray(await r.json()));
+@@ -1002,6 +1084,32 @@ function Admin() {
+           <input className="owner-field" type="text" placeholder="Username" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} required />
+           <input className="owner-field" type="password" placeholder="Password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} required />
+           {loginError && <p style={{color:'var(--red)',fontSize:'.85rem'}}>{loginError}</p>}
++          <div style={{ marginTop: '10px', marginBottom: '14px', textAlign: 'left' }}>
++            <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '4px', fontWeight: 600 }}>Server Connection:</label>
++            <select 
++              value={API_URL} 
++              onChange={e => {
++                try {
++                  localStorage.setItem('blitz_api_url', e.target.value);
++                  window.location.reload();
++                } catch (err) {}
++              }}
++              style={{
++                width: '100%', 
++                padding: '8px 10px', 
++                borderRadius: '8px', 
++                background: 'var(--bg-2)', 
++                border: '1px solid var(--line)', 
++                color: 'var(--text)',
++                fontSize: '0.8rem',
++                fontFamily: 'inherit',
++                cursor: 'pointer'
++              }}
++            >
++              <option value="https://blitzmall-backend.onrender.com/api">Cloud (Live Online Database)</option>
++              <option value="http://localhost:5000/api">Local Server (Development)</option>
++            </select>
++          </div>
+           <button className="blitz-admin-btn" type="submit">Sign In</button>
+         </form>
+       </div></div>
+@@ -1060,6 +1168,31 @@ function Admin() {
+             {muted ? "≡ƒöò" : "≡ƒöö"}{totalAlerts > 0 && <i className="blitz-admin-bell-dot">{totalAlerts}</i>}
+           </button>
+           {!isCashier && <span className="blitz-admin-muted" style={{fontSize:'.78rem'}}>{user?.name} ┬╖ {user?.role}{user?.branchId ? ' ┬╖ ' + (branches.find(b => b._id === user.branchId)?.name || 'Branch') : ''}</span>}
++          <button 
++            onClick={() => {
++              const newVal = !adminPerfMode;
++              setAdminPerfMode(newVal);
++              try { localStorage.setItem('blitz_perf_mode', String(newVal)); } catch (e) {}
++            }} 
++            style={{
++              background: adminPerfMode ? 'rgba(54, 211, 153, 0.12)' : 'var(--bg-2)',
++              border: '1px solid var(--line)',
++              color: adminPerfMode ? 'var(--green)' : 'var(--text)',
++              borderRadius: 8,
++              padding: '4px 10px',
++              fontSize: '0.72rem',
++              fontWeight: 600,
++              cursor: 'pointer',
++              display: 'flex',
++              alignItems: 'center',
++              fontFamily: 'inherit',
++              transition: 'all 0.15s ease',
++              marginRight: '6px'
++            }}
++            title="Toggle Performance / Graphics Mode"
++          >
++            ≡ƒÅÄ∩╕Å {adminPerfMode ? 'Fast' : 'Rich'}
++          </button>
+           <button className="blitz-admin-exit" onClick={() => { 
+             localStorage.removeItem('bm_token'); localStorage.removeItem('bm_user'); 
+             sessionStorage.removeItem('bm_token'); sessionStorage.removeItem('bm_user'); 
+@@ -1091,13 +1224,47 @@ function Admin() {
+           <div className="shift-lock-card" style={{background:'var(--card)',border:'1px solid var(--line)',padding:'40px',borderRadius:20,maxWidth:400,boxShadow:'0 10px 30px rgba(0,0,0,0.5)',margin:'0 auto'}}>
+             <span style={{fontSize:'3.5rem'}}>≡ƒöÆ</span>
+             <h2 style={{fontFamily:'Unbounded, sans-serif',margin:'15px 0 10px 0',color:'var(--gold)'}}>POS Register Locked</h2>
+-            <p className="blitz-admin-muted" style={{fontSize:'.9rem',marginBottom:24}}>A cashier shift must be opened before you can scan products or record sales transactions.</p>
++            <p className="blitz-admin-muted" style={{fontSize:'.9rem',marginBottom:16}}>A cashier shift must be opened before you can scan products or record sales transactions.</p>
++            
++            <div style={{ marginBottom: '20px', textAlign: 'left' }}>
++              <label style={{ fontSize: '0.75rem', color: 'var(--muted)', display: 'block', marginBottom: '4px', fontWeight: 600 }}>Database Connection:</label>
++              <select 
++                value={API_URL} 
++                onChange={e => {
++                  try {
++                    localStorage.setItem('blitz_api_url', e.target.value);
++                    window.location.reload();
++                  } catch (err) {}
++                }}
++                style={{
++                  width: '100%', 
++                  padding: '10px 12px', 
++                  borderRadius: '10px', 
++                  background: 'var(--bg-2)', 
++                  border: '1px solid var(--line)', 
++                  color: 'var(--text)',
++                  fontSize: '0.85rem',
++                  fontFamily: 'inherit',
++                  cursor: 'pointer'
++                }}
++              >
++                <option value="https://blitzmall-backend.onrender.com/api">Cloud (Live Online Database)</option>
++                <option value="http://localhost:5000/api">Local Server (Development)</option>
++              </select>
++            </div>
++
+             <form onSubmit={handleOpenShiftSubmit} style={{display:'flex',flexDirection:'column',gap:12}}>
+               <input 
+-                type="number" 
++                type="text" 
++                inputMode="decimal"
+                 placeholder="Enter starting cash balance (KES)" 
+                 value={startingCashInput} 
+-                onChange={e => setStartingCashInput(e.target.value)} 
++                onChange={e => {
++                  const val = e.target.value;
++                  if (val === '' || /^\d*\.?\d*$/.test(val)) {
++                    setStartingCashInput(val);
++                  }
++                }} 
+                 required 
+                 style={{textAlign:'center',padding:12,borderRadius:10,background:'var(--bg-2)',border:'1px solid var(--line)',color:'var(--text)',fontSize:'1rem',width:'100%',boxSizing:'border-box'}}
+               />
+@@ -1194,7 +1361,7 @@ function Admin() {
+                   <button className={payMethod==="split"?"on":""} onClick={() => setPayMethod("split")}>≡ƒöÇ Split</button>
+                 <button className={payMethod==="airtel"?"on":""} onClick={() => setPayMethod("airtel")}>≡ƒô▓ Airtel</button>
+                 </div>
+-                {payMethod === "cash" && <div className="pos-cash"><label>Amount given<input type="number" value={amountGiven} onChange={e => setAmountGiven(e.target.value)} placeholder="e.g. 500" /></label><div className={"pos-change" + (change > 0 ? " show" : "")}>Change to give: <b>{money(change)}</b></div></div>}
++                {payMethod === "cash" && <div className="pos-cash"><label>Amount given<input type="text" inputMode="decimal" value={amountGiven} onChange={e => { const val = e.target.value; if (val === '' || /^\d*\.?\d*$/.test(val)) setAmountGiven(val); }} placeholder="e.g. 500" /></label><div className={"pos-change" + (change > 0 ? " show" : "")}>Change to give: <b>{money(change)}</b></div></div>}
+                 {payMethod === "mpesa" && (
+                   <div className="pos-cash">
+                     <label>Customer phone *<input type="tel" value={custPhone} onChange={e => setCustPhone(e.target.value)} placeholder="07xx xxx xxx" /></label>
+@@ -1203,7 +1370,7 @@ function Admin() {
+                     {stkStatus === "failed" && <div className="stk-fail">Γ¥î {stkError || "Payment failed. Try again."}<button onClick={() => { setStkStatus("idle"); setStkError(""); }} style={{marginLeft:8,cursor:"pointer",background:"none",border:"none",color:"var(--orange)"}}>Retry</button></div>}
+                   </div>
+                 )}
+-                {payMethod === "split" && <div className="pos-cash"><label>Cash part<input type="number" value={cashPart} onChange={e => setCashPart(e.target.value)} placeholder="KES" /></label><label>M-Pesa part<input type="number" value={mpesaPart} onChange={e => setMpesaPart(e.target.value)} placeholder="KES" /></label><div className="pos-change show">Covered: {money(splitCovered)} / {money(saleTotal)}</div></div>}
++                {payMethod === "split" && <div className="pos-cash"><label>Cash part<input type="text" inputMode="decimal" value={cashPart} onChange={e => { const val = e.target.value; if (val === '' || /^\d*\.?\d*$/.test(val)) setCashPart(val); }} placeholder="KES" /></label><label>M-Pesa part<input type="text" inputMode="decimal" value={mpesaPart} onChange={e => { const val = e.target.value; if (val === '' || /^\d*\.?\d*$/.test(val)) setMpesaPart(val); }} placeholder="KES" /></label><div className="pos-change show">Covered: {money(splitCovered)} / {money(saleTotal)}</div></div>}
+                 {payMethod === "airtel" && <div className="pos-cash"><p style={{color:"var(--muted)",fontSize:".85rem"}}>Customer sends Airtel Money manually to your number. Confirm after you see it on your phone.</p></div>}
+                 <button className="blitz-admin-btn pos-complete" disabled={!saleCart.length} onClick={completeSale}>Complete sale</button>
+               </>
+@@ -1213,7 +1380,7 @@ function Admin() {
+               {recentSales.length === 0 ? <p className="blitz-admin-empty sm">No sales yet.</p> : recentSales.map(s => (
+                 <div className="pos-recent-row" key={s._id}>
+                   <div><b>{money(s.total)}</b><span className="blitz-admin-muted"> ┬╖ {s.paymentMethod} ┬╖ {s.staff||""} ┬╖ {new Date(s.createdAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span></div>
+-                  <button className="pos-void" onClick={() => voidSale(s._id)}>void</button>
++                  {!isCashier && <button className="pos-void" onClick={() => voidSale(s._id)}>void</button>}
+                 </div>
+               ))}
+             </div>
+@@ -1229,10 +1396,16 @@ function Admin() {
+             <p className="blitz-admin-muted" style={{fontSize:'.85rem',marginBottom:20}}>Count the cash in your drawer and enter the total balance below to reconcile sales.</p>
+             <form onSubmit={handleCloseShiftSubmit} style={{display:'flex',flexDirection:'column',gap:12}}>
+               <input 
+-                type="number" 
++                type="text" 
++                inputMode="decimal"
+                 placeholder="Enter actual closing cash balance (KES)" 
+                 value={closingCashInput} 
+-                onChange={e => setClosingCashInput(e.target.value)} 
++                onChange={e => {
++                  const val = e.target.value;
++                  if (val === '' || /^\d*\.?\d*$/.test(val)) {
++                    setClosingCashInput(val);
++                  }
++                }} 
+                 required 
+                 style={{textAlign:'center',padding:12,borderRadius:10,background:'var(--bg-2)',border:'1px solid var(--line)',color:'var(--text)',fontSize:'1rem',width:'100%',boxSizing:'border-box'}}
+               />
+@@ -2228,7 +2401,48 @@ function Admin() {
+         </div>
+       )}
+ 
+-      {showFlashSaleModal && flashSaleProduct && (
++      <button onClick={() => setShowAdminAiBot(v => !v)} style={{position:'fixed',bottom:24,right:24,width:56,height:56,borderRadius:'50%',background:'var(--grad)',color:'#000',border:'none',fontSize:'1.5rem',cursor:'pointer',zIndex:2999,boxShadow:'0 4px 20px rgba(255,122,26,0.4)',display:'flex',alignItems:'center',justifyContent:'center',transition:'transform 0.2s'}} title="AI Business Assistant" onMouseEnter={e => e.target.style.transform='scale(1.1)'} onMouseLeave={e => e.target.style.transform='scale(1)'}>≡ƒñû</button>
++        {showAdminAiBot && (
++          <div style={{position:'fixed',bottom:90,right:16,width:360,maxWidth:'calc(100vw - 32px)',height:480,background:'var(--card)',border:'1px solid var(--line)',borderRadius:16,display:'flex',flexDirection:'column',zIndex:3000,boxShadow:'0 10px 40px rgba(0,0,0,0.6)',overflow:'hidden'}}>
++            <div style={{background:'var(--grad)',padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center',color:'#000',fontWeight:700}}>
++              <span style={{fontSize:'.9rem'}}>≡ƒñû Business AI Assistant</span>
++              <button onClick={() => setShowAdminAiBot(false)} style={{background:'none',border:'none',color:'#000',fontSize:'1.1rem',cursor:'pointer',fontWeight:700}}>Γ£ò</button>
++            </div>
++            <div style={{flex:1,overflowY:'auto',padding:12,display:'flex',flexDirection:'column',gap:8}}>
++              {adminAiMessages.map((msg, i) => (
++                <div key={i} style={{display:'flex',justifyContent:msg.sender==='user'?'flex-end':'flex-start'}}>
++                  <div style={{maxWidth:'85%',padding:'8px 12px',borderRadius:msg.sender==='user'?'12px 12px 2px 12px':'12px 12px 12px 2px',background:msg.sender==='user'?'var(--grad)':'var(--bg-2)',color:msg.sender==='user'?'#000':'var(--text)',fontSize:'.82rem',lineHeight:1.4,whiteSpace:'pre-wrap',border:msg.sender==='user'?'none':'1px solid var(--line)'}}>
++                    {msg.text.split('\n').map((line, idx) => <p key={idx} style={{margin:'2px 0',whiteSpace:'pre-wrap'}}>{line}</p>)}
++                  </div>
++                </div>
++              ))}
++              {adminAiLoading && (
++                <div style={{display:'flex',justifyContent:'flex-start'}}>
++                  <div style={{padding:'8px 12px',borderRadius:'12px 12px 12px 2px',background:'var(--bg-2)',border:'1px solid var(--line)',fontSize:'.82rem',color:'var(--muted)'}}>
++                    Thinking...
++                  </div>
++                </div>
++              )}
++                        </div>
++              <div ref={adminAiMessagesEndRef} />
++            {/* Quick action buttons */}
++            {adminAiMessages.length === 1 && adminAiMessages[0].sender === 'bot' && !adminAiLoading && (
++              <div style={{padding:'4px 12px 2px',display:'flex',flexDirection:'column',gap:4}}>
++                <p style={{fontSize:'.7rem',color:'var(--muted)',margin:0,fontWeight:600,textTransform:'uppercase',letterSpacing:'.5px'}}>Quick actions</p>
++                <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
++                  {adminAiQuickActions.map((a, i) => (
++                    <button key={i} onClick={() => handleAdminAiQuickAction(a.text)} style={{background:'var(--bg-2)',border:'1px solid var(--line)',color:'var(--text)',borderRadius:20,padding:'4px 10px',fontSize:'.75rem',fontWeight:600,cursor:'pointer',transition:'all .2s',fontFamily:'inherit'}}>{a.label}</button>
++                  ))}
++                </div>
++              </div>
++            )}
++            <form onSubmit={sendAdminAiMessage} style={{display:'flex',gap:8,padding:10,borderTop:'1px solid var(--line)',background:'var(--bg-2)'}}>
++              <input value={adminAiInput} onChange={e => setAdminAiInput(e.target.value)} placeholder="Ask about sales, inventory, orders..." disabled={adminAiLoading} style={{flex:1,padding:'8px 10px',borderRadius:8,background:'var(--bg)',border:'1px solid var(--line)',color:'var(--text)',fontSize:'.82rem'}} />
++              <button type="submit" disabled={adminAiLoading || !adminAiInput.trim()} className="blitz-admin-btn small" style={{padding:'8px 14px',fontSize:'.82rem'}}>Send</button>
++            </form>
++          </div>
++        )}
++        {showFlashSaleModal && flashSaleProduct && (
+         <div className="blitz-admin-modal-overlay" style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:2000,backdropFilter:'blur(5px)'}}>
+           <div className="blitz-admin-modal-card" style={{background:'var(--card)',border:'1px solid var(--line)',padding:30,borderRadius:16,width:'100%',maxWidth:420}}>
+             <h3 style={{fontFamily:'Unbounded, sans-serif',color:'var(--orange)',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>ΓÜí Configure Flash Sale</h3>
